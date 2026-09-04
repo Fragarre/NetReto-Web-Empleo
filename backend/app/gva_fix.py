@@ -143,7 +143,7 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                             """INSERT INTO publicaciones
                             (proceso_id, fuente_id, referencia, tipo, titulo, fecha_publicacion,
                              url, contenido_hash, contenido_texto, datos_json)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                             (proceso_id, GVA_FUENTE_ID, publicacion["referencia"], publicacion["tipo"], publicacion["titulo"], publicacion["fecha_publicacion"], publicacion["url"], publicacion["contenido_hash"], publicacion["contenido_texto"], Jsonb(publicacion["datos_json"])),
                         )
                         estadisticas["publicaciones"] += 1
