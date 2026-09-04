@@ -4,7 +4,6 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from .database import get_connection
 from .gva_fix import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -57,59 +56,6 @@ def proceso(proceso_id: int) -> dict[str, Any]:
     if resultado is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     return resultado
-
-
-@app.get("/admin/debug/publicaciones")
-def debug_publicaciones(
-    x_import_secret: str | None = Header(default=None),
-    proceso_id: int = Query(..., ge=1),
-) -> list[dict[str, Any]]:
-    """Consulta temporal protegida para revisar publicaciones durante las pruebas."""
-    secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
-    if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
-        raise HTTPException(status_code=403, detail="No autorizado")
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT id, proceso_id, fuente_id, referencia, tipo, titulo,
-                       fecha_publicacion, url, contenido_hash, detectada_at
-                FROM publicaciones
-                WHERE proceso_id = %s
-                ORDER BY id
-            """, (proceso_id,))
-            columnas = ["id", "proceso_id", "fuente_id", "referencia", "tipo", "titulo", "fecha_publicacion", "url", "contenido_hash", "detectada_at"]
-            return [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
-
-
-@app.post("/admin/debug/limpiar-publicaciones")
-def debug_limpiar_publicaciones(
-    x_import_secret: str | None = Header(default=None),
-    ids: str = Query(...),
-) -> dict[str, Any]:
-    """Eliminación temporal y explícita de filas de publicaciones de prueba."""
-    secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
-    if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
-        raise HTTPException(status_code=403, detail="No autorizado")
-    try:
-        ids_lista = [int(valor.strip()) for valor in ids.split(",") if valor.strip()]
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="ids debe ser una lista de enteros") from exc
-    if not ids_lista:
-        raise HTTPException(status_code=400, detail="Debe indicar al menos un id")
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM publicaciones WHERE id = ANY(%s) ORDER BY id", (ids_lista,))
-            encontrados = [fila[0] for fila in cursor.fetchall()]
-            if encontrados != sorted(set(ids_lista)):
-                raise HTTPException(status_code=404, detail={"encontrados": encontrados, "solicitados": sorted(set(ids_lista))})
-            cursor.execute("SELECT DISTINCT publicacion_id FROM cambios WHERE publicacion_id = ANY(%s)", (ids_lista,))
-            vinculados = [fila[0] for fila in cursor.fetchall()]
-            if vinculados:
-                raise HTTPException(status_code=409, detail={"publicaciones_con_cambios": vinculados})
-            cursor.execute("DELETE FROM publicaciones WHERE id = ANY(%s) RETURNING id", (ids_lista,))
-            eliminados = [fila[0] for fila in cursor.fetchall()]
-        connection.commit()
-    return {"eliminados": eliminados}
 
 
 @app.post("/admin/import/gva")
