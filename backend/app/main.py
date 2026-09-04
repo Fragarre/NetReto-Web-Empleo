@@ -4,7 +4,7 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from .gva import importar_gva
+from .gva_fix import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
 
@@ -64,16 +64,12 @@ def importar_gva_endpoint(
     max_paginas: int = Query(default=1, ge=1, le=10),
     max_detalles: int | None = Query(default=10, ge=1, le=100),
 ) -> dict[str, int]:
-    """Importación manual protegida por un secreto de administración.
-
-    No se expone el secreto en la URL ni se permite la ejecución si la variable
-    EMPLOYMENT_IMPORT_SECRET no está configurada en Render.
-    """
+    """Importación manual protegida por un secreto de administración."""
     secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
     if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     try:
-        return importar_gva(max_paginas=max_paginas, max_detalles=max_detalles)
+        return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
