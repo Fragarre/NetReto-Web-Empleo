@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -60,6 +61,12 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                     respuesta.raise_for_status()
                     proceso = parsear_detalle(url, respuesta.text, id_emp)
                     texto = proceso["publicacion"]["contenido_texto"]
+                    # El HTML de GVA contiene elementos dinámicos que cambian
+                    # entre peticiones. La publicación se identifica por el
+                    # contenido visible normalizado, no por el HTML bruto.
+                    hash_contenido = hashlib.sha256(texto.encode("utf-8")).hexdigest()
+                    proceso["publicacion"]["contenido_hash"] = hash_contenido
+                    proceso["publicacion"]["referencia"] = f"GVA:{id_emp}:{hash_contenido}"
                     tipo_parser = proceso.get("tipo_proceso")
                     tipo_convocatoria = _tipo_convocatoria(texto)
                     tipo_final = tipo_parser or tipo_convocatoria
