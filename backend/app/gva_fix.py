@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -14,6 +15,9 @@ from .gva import (
     descubrir_detalles,
     parsear_detalle,
 )
+
+
+ANIOS_INCLUIDOS = {2026, 2027}
 
 
 def _tipo_convocatoria(texto: str) -> str | None:
@@ -45,6 +49,20 @@ def _es_incluido(tipo: str | None) -> bool:
     ))
 
 
+def _es_del_ambito_temporal(proceso: dict[str, Any], texto: str) -> bool:
+    """Limita el catálogo a procesos de 2026/2027 o publicados desde 2026.
+
+    Algunos trámites GVA permanentes no contienen año de convocatoria. En esos
+    casos solo se aceptan si su publicación más reciente es de 2026 o posterior.
+    """
+    anio = proceso.get("anio_convocatoria")
+    if anio is not None:
+        return anio in ANIOS_INCLUIDOS
+
+    fecha_publicacion = proceso["publicacion"].get("fecha_publicacion")
+    return bool(fecha_publicacion and fecha_publicacion >= date(2026, 1, 1))
+
+
 def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) -> dict[str, Any]:
     estadisticas: dict[str, Any] = {"descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "diagnostico": []}
     import httpx
@@ -61,9 +79,6 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                     respuesta.raise_for_status()
                     proceso = parsear_detalle(url, respuesta.text, id_emp)
                     texto = proceso["publicacion"]["contenido_texto"]
-                    # El HTML de GVA contiene elementos dinámicos que cambian
-                    # entre peticiones. La publicación se identifica por el
-                    # contenido visible normalizado, no por el HTML bruto.
                     hash_contenido = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     proceso["publicacion"]["contenido_hash"] = hash_contenido
                     proceso["publicacion"]["referencia"] = f"GVA:{id_emp}:{hash_contenido}"
@@ -71,8 +86,18 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                     tipo_convocatoria = _tipo_convocatoria(texto)
                     tipo_final = tipo_parser or tipo_convocatoria
                     proceso["tipo_proceso"] = tipo_final
-                    if not _es_incluido(tipo_final):
-                        estadisticas["diagnostico"].append({"id_emp": id_emp, "url": url, "tipo_parser": tipo_parser, "tipo_convocatoria": tipo_convocatoria, "tipo_final": tipo_final, "fragmentos": [texto[max(0, m.start()-80):m.end()+180] for m in re.finditer(r"Convocatoria|Proceso selectivo|Tipo de prueba|Grupo|Plazas", texto, re.I)][:8]})
+                    if not _es_incluido(tipo_final) or not _es_del_ambito_temporal(proceso, texto):
+                        estadisticas["diagnostico"].append({
+                            "id_emp": id_emp,
+                            "url": url,
+                            "tipo_parser": tipo_parser,
+                            "tipo_convocatoria": tipo_convocatoria,
+                            "tipo_final": tipo_final,
+                            "anio_convocatoria": proceso.get("anio_convocatoria"),
+                            "fecha_publicacion": proceso["publicacion"].get("fecha_publicacion"),
+                            "motivo": "tipo_excluido" if not _es_incluido(tipo_final) else "fuera_ambito_2026_2027",
+                            "fragmentos": [texto[max(0, m.start()-80):m.end()+180] for m in re.finditer(r"Convocatoria|Proceso selectivo|Tipo de prueba|Grupo|Plazas", texto, re.I)][:8],
+                        })
                         continue
                     campos = ["denominacion", "grupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_apertura", "fecha_cierre"]
                     cursor.execute("SELECT id, denominacion, grupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_apertura, fecha_cierre FROM procesos WHERE identificador_estable = %s", (proceso["identificador_estable"],))
