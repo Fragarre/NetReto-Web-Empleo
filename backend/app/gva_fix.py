@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import re
-from datetime import date, datetime, timezone
 from typing import Any
+
+from psycopg.types.json import Jsonb
 
 from .database import get_connection
 from .gva import (
@@ -120,7 +120,7 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                             ultima_publicacion_at=COALESCE(%s, ultima_publicacion_at),
                             fuente_principal_id=%s, datos_json=%s, updated_at=NOW()
                             WHERE id=%s""",
-                            (proceso["codigo_externo"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, proceso["datos_json"], proceso_id),
+                            (proceso["codigo_externo"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"]), proceso_id),
                         )
                     else:
                         cursor.execute(
@@ -131,7 +131,7 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                              fuente_principal_id, datos_json)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             RETURNING id""",
-                            (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["identificador_estable"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, proceso["datos_json"]),
+                            (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["identificador_estable"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"])),
                         )
                         proceso_id = cursor.fetchone()[0]
 
@@ -143,8 +143,8 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                             """INSERT INTO publicaciones
                             (proceso_id, fuente_id, referencia, tipo, titulo, fecha_publicacion,
                              url, contenido_hash, contenido_texto, datos_json)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                            (proceso_id, GVA_FUENTE_ID, publicacion["referencia"], publicacion["tipo"], publicacion["titulo"], publicacion["fecha_publicacion"], publicacion["url"], publicacion["contenido_hash"], publicacion["contenido_texto"], publicacion["datos_json"]),
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (proceso_id, GVA_FUENTE_ID, publicacion["referencia"], publicacion["tipo"], publicacion["titulo"], publicacion["fecha_publicacion"], publicacion["url"], publicacion["contenido_hash"], publicacion["contenido_texto"], Jsonb(publicacion["datos_json"])),
                         )
                         estadisticas["publicaciones"] += 1
 
