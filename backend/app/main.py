@@ -63,7 +63,7 @@ def importar_gva_endpoint(
     x_import_secret: str | None = Header(default=None),
     max_paginas: int = Query(default=1, ge=1, le=10),
     max_detalles: int | None = Query(default=10, ge=1, le=100),
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Importación manual protegida por un secreto de administración."""
     secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
     if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
