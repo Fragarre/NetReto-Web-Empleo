@@ -4,6 +4,9 @@ from .database import get_connection
 # Registros creados por la prueba anterior y que el filtro corregido ya excluye.
 REGISTROS_PRUEBA = ("2026/10924", "2026/10931", "2026/11054")
 
+# Procesos válidos importados durante la prueba del BOP.
+REGISTROS_VALIDOS_PRUEBA = ("2026/10873", "2026/10875", "2026/10878", "2026/10879", "2026/10881")
+
 
 def limpiar_anuncios_no_empleo() -> dict[str, int]:
     """Elimina exclusivamente los tres anuncios incorrectos de la prueba BOP."""
@@ -47,3 +50,23 @@ def limpiar_anuncios_no_empleo() -> dict[str, int]:
         "publicaciones_eliminadas": 3,
         "cambios_eliminados": 0,
     }
+
+
+def normalizar_bop_prueba() -> dict[str, int]:
+    """Corrige valores de la primera prueba que no deben confundirse con la publicación del BOP."""
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE procesos
+                   SET fecha_convocatoria = NULL,
+                       updated_at = NOW()
+                 WHERE organismo_id = 2
+                   AND codigo_externo = ANY(%s)
+                   AND fecha_convocatoria = DATE '2026-09-02'
+                """,
+                (list(REGISTROS_VALIDOS_PRUEBA),),
+            )
+            corregidos = cursor.rowcount
+        connection.commit()
+    return {"procesos_normalizados": corregidos}
