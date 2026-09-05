@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 from . import gva_clean as base
 from .database import get_connection
 
@@ -42,15 +44,9 @@ def _extraer_organismo(texto: str) -> str | None:
     m_etapa = re.search(r"\bEtapa actual\s*:", normal, re.I)
     if not m_etapa:
         return None
-
-    # La página contiene una navegación global que repite decenas de
-    # organismos. El organismo real aparece en el bloque final, justo antes
-    # de "Etapa actual:". Tomamos solo el contenido posterior al último
-    # "Atrás" de ese bloque para evitar contaminar la evidencia con el menú.
     previo = normal[:m_etapa.start()]
     m_atras = list(re.finditer(r"\bAtrás\b", previo, re.I))
     bloque = previo[m_atras[-1].end():] if m_atras else previo[-2500:]
-
     patrones = (
         r"Conselleria\s+[^:]{1,180}",
         r"Labora\s+[^:]{1,180}",
@@ -67,9 +63,32 @@ def _extraer_organismo(texto: str) -> str | None:
     return max(candidatos, key=lambda x: x[0])[1] if candidatos else None
 
 
+def _extraer_organismo_html(html: str) -> str | None:
+    """Extrae el organismo desde el enlace 'Enllaç a organisme'.
+
+    Es la evidencia más fiable cuando la página no muestra el nombre del
+    organismo como texto independiente antes de 'Etapa actual'.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for etiqueta in soup.find_all(string=re.compile(r"Enllaç a organisme|Enlace a organismo", re.I)):
+        contenedor = etiqueta.parent
+        if contenedor is None:
+            continue
+        bloque = contenedor.parent or contenedor
+        enlace = bloque.find_next("a", href=True)
+        if enlace:
+            valor = base._normalizar(enlace.get_text(" ", strip=True))
+            if valor and not re.fullmatch(r"https?://\S+", valor):
+                return valor
+            href = enlace.get("href", "")
+            if href:
+                return href
+    return None
+
+
 def _resolver_organismo(titulo: str, organismo: str | None) -> tuple[int | None, str]:
     evidencia = base._sin_acentos(f"{titulo} {organismo or ''}")
-    externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia")
+    externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia", "istec", "institut superior tecnologic", "universitat", "diputacion", "ayuntamiento")
     if any(marca in evidencia for marca in externos):
         return None, "organismo_externo"
     org_normal = base._sin_acentos(organismo or "")
@@ -84,7 +103,7 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     proceso = _BASE_PARSEAR_DETALLE(url, html, id_emp)
     texto = proceso["publicacion"]["contenido_texto"]
     titulo = proceso["denominacion"]
-    organismo = _extraer_organismo(texto)
+    organismo = _extraer_organismo_html(html) or _extraer_organismo(texto)
     organismo_id, motivo = _resolver_organismo(titulo, organismo)
     proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
     proceso["turno"] = _turno(f"{titulo} {texto}")
