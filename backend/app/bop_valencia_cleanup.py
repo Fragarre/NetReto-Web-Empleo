@@ -53,11 +53,10 @@ def limpiar_anuncios_no_empleo() -> dict[str, int]:
 
 
 def normalizar_bop_prueba() -> dict[str, int]:
-    """Corrige los datos de la primera prueba evitando conflictos con el identificador estable."""
+    """Corrige los datos de la primera prueba del BOP."""
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            # El proceso 10881 fue creado con el identificador truncado DVAL:149/22.
-            # Solo se corrige si el identificador correcto todavía no existe.
+            # Solo 2026/10881 necesita cambiar de DVAL:149/22 a DVAL:149/22E.
             cursor.execute(
                 """
                 SELECT 1
@@ -74,7 +73,10 @@ def normalizar_bop_prueba() -> dict[str, int]:
             cursor.execute(
                 """
                 UPDATE procesos
-                   SET identificador_estable = 'DVAL:149/22E',
+                   SET identificador_estable = CASE codigo_externo
+                           WHEN '2026/10881' THEN 'DVAL:149/22E'
+                           ELSE identificador_estable
+                       END,
                        fecha_convocatoria = NULL,
                        plazas = CASE codigo_externo
                            WHEN '2026/10873' THEN 1
