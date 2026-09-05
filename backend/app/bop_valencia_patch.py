@@ -14,54 +14,48 @@ from . import bop_valencia as _bop
 BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
 
 
-def _contenedor_anuncio(a: Any) -> Any | None:
-    cont = a
-    for _ in range(16):
-        cont = cont.parent
-        if cont is None:
-            return None
-        texto = cont.get_text(" ", strip=True)
-        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I) and re.search(r"Anunci\b", texto, re.I):
-            return cont
-    return None
-
-
-def _titulo_desde_contenedor(cont: Any) -> str:
-    texto = cont.get_text(" ", strip=True)
-    m = re.search(r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro))", texto, re.I)
-    return _bop._norm(m.group(1)) if m else _bop._norm(texto)
-
-
 def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
+    """Extract BOP announcements from rendered HTML without relying on PrimeFaces CSS classes."""
     soup = BeautifulSoup(html, "html.parser")
+    texto = _bop._norm(soup.get_text(" ", strip=True))
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-    for a in soup.find_all("a"):
-        if "ui-commandlink" not in " ".join(a.get("class", [])):
+
+    # The rendered BOP result repeats this sequence for each announcement:
+    # announcement title -> registration number -> publication metadata.
+    matches = list(re.finditer(r"Anunci\b", texto, re.I))
+    for i, m in enumerate(matches):
+        fin = matches[i + 1].start() if i + 1 < len(matches) else len(texto)
+        bloque = texto[m.start():fin]
+        reg_match = re.search(r"\b(\d{4}/\d+)\b", bloque)
+        if not reg_match:
             continue
-        cont = _contenedor_anuncio(a)
-        if cont is None:
-            continue
-        texto_cont = _bop._norm(cont.get_text(" ", strip=True))
-        titulo = _titulo_desde_contenedor(cont)
-        if "diputacion provincial de valencia" not in _bop._sin(texto_cont):
+        registro = reg_match.group(1)
+        titulo = _bop._norm(bloque[:reg_match.start()])
+        if "diputacion provincial de valencia" not in _bop._sin(bloque):
             continue
         if not _bop._incluido(titulo):
             continue
-        registro, fecha = _bop._extraer_metadatos(a)
-        if not registro:
-            m = re.search(r"\b(\d{4}/\d+)\b", texto_cont)
-            registro = m.group(1) if m else None
-        if not registro or registro in vistos:
+        if registro in vistos:
             continue
         vistos.add(registro)
-        resultados.append({"titulo": titulo, "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es", "registro": registro, "fecha_publicacion": fecha})
+        fecha = None
+        fecha_match = re.search(r"\b(\d{2}/\d{2}/\d{4})\b", bloque)
+        if fecha_match:
+            try:
+                fecha = date.fromisoformat("-".join(reversed(fecha_match.group(1).split("/"))))
+            except ValueError:
+                fecha = None
+        resultados.append({
+            "titulo": titulo,
+            "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es",
+            "registro": registro,
+            "fecha_publicacion": fecha,
+        })
     return resultados
 
 
 def _ajax_html(response_text: str) -> str:
-    # PrimeFaces devuelve el HTML de los componentes dentro de CDATA.
-    # Extraer CDATA primero evita que el HTML quede convertido en texto literal.
     if "<partial-response" not in response_text:
         return response_text
     bloques = re.findall(r"<!\[CDATA\[(.*?)\]\]>", response_text, flags=re.S)
