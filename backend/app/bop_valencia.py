@@ -178,7 +178,7 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
         if not titulo or not _incluido(titulo):
             continue
         n = _sin(titulo)
-        if "diputacion provincial de valencia" not in n:
+        if "diputacion provincial de valencia" not in n and "diputacio provincial de valencia" not in n:
             continue
         if "ui-commandlink" not in " ".join(a.get("class", [])):
             continue
@@ -188,7 +188,7 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
         vistos.add(registro)
         resultados.append({
             "titulo": titulo,
-            "url": f"{DOWNLOAD_URL}?anuncioCSV={registro}&lang=es",
+            "url": f"{DOWNLOAD_URL}?anuncioCSV=BOPV-{registro}&lang=es",
             "registro": registro,
             "fecha_publicacion": fecha,
         })
