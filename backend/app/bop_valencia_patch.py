@@ -106,6 +106,26 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
     soup = BeautifulSoup(r.text, "html.parser")
     texto = _bop._norm(soup.get_text(" ", strip=True))
     commandlinks = [a for a in soup.find_all("a") if "ui-commandlink" in " ".join(a.get("class", []))]
+
+    historico_links = []
+    for a in soup.find_all("a", href=True):
+        label = _bop._norm(a.get_text(" ", strip=True))
+        href = a.get("href")
+        if "hist" in _bop._sin(label).lower() or "fondosdigitales.dival.es" in href:
+            historico_links.append({"texto": label, "href": href})
+
+    formularios = []
+    for form in soup.find_all("form"):
+        formularios.append({
+            "id": form.get("id"),
+            "action": form.get("action"),
+            "method": form.get("method"),
+            "inputs": [
+                {"name": i.get("name"), "type": i.get("type"), "value": i.get("value")}
+                for i in form.find_all("input") if i.get("name")
+            ][:80],
+        })
+
     return {
         "url": str(r.url),
         "fecha_solicitada": fecha,
@@ -116,4 +136,6 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         "commandlinks": len(commandlinks),
         "anuncios_parser": len(_extraer_anuncios_pagina(r.text)),
         "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
+        "historico_links": historico_links[:10],
+        "formularios": formularios[:10],
     }
