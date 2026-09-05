@@ -7,9 +7,8 @@ from uuid import UUID
 import httpx
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from psycopg.rows import dict_row
 
-from .database import get_connection
+from app.database import get_connection
 
 bearer = HTTPBearer(auto_error=False)
 
