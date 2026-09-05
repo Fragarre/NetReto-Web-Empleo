@@ -132,6 +132,43 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
     return resultados
 
 
+def _convocatoria_corregida(s: str) -> str | None:
+    m = re.search(r"convocatoria\s+([a-z]?\s*\d{1,3}/\d{2,4}[a-z]?)", _bop._sin(s), re.I)
+    return re.sub(r"\s+", "", m.group(1)).upper() if m else None
+
+
+def _plazas_corregida(s: str) -> int | None:
+    n = _bop._sin(s)
+    patrones = [
+        r"(?:seleccion|seleccio)\s+d['’](una|un)\s+(?:plazas?|places?|placa)",
+        r"(?:seleccion|seleccio)\s+de\s+(una|un)\s+(?:plazas?|places?|placa)",
+        r"(?:seleccion|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?|placa)",
+        r"(?:seleccion|seleccio)\s+de\s+(una|dos|tres|cuatro|cinc|sis|set|siete|vuit|ocho|nou|nueve|deu|diez)\s+(?:plazas?|places?|placa)",
+    ]
+    palabras = {"una": 1, "un": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinc": 5, "sis": 6, "set": 7, "siete": 7, "vuit": 8, "ocho": 8, "nou": 9, "nueve": 9, "deu": 10, "diez": 10}
+    for patron in patrones:
+        m = re.search(patron, n, re.I)
+        if m:
+            valor = m.group(1)
+            return int(valor) if valor.isdigit() else palabras.get(valor.lower())
+    return None
+
+
+def _grupo_subgrupo_corregida(s: str) -> tuple[str | None, str | None]:
+    n = _bop._sin(s)
+    m = re.search(r"(?:subgrupo|grupo)\s*:?\s*([abc]\d(?:/\d)?)", n, re.I)
+    if not m:
+        return None, None
+    subgrupo = m.group(1).upper()
+    return subgrupo[0], subgrupo
+
+
+# Estas funciones son usadas internamente por el importador base.
+_bop._convocatoria = _convocatoria_corregida
+_bop._plazas = _plazas_corregida
+_bop._grupo_subgrupo = _grupo_subgrupo_corregida
+
+
 def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, Any]:
     _bop.descubrir_anuncios = descubrir_anuncios
     return _bop.importar_bop_valencia(historico=historico, dias=dias)
