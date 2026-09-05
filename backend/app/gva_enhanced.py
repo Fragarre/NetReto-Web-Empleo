@@ -55,30 +55,37 @@ def _extraer_organismo(texto: str) -> str | None:
 
 
 def _extraer_enlace_organismo(texto: str) -> str | None:
-    # En el texto plano generado por BeautifulSoup, el href no se conserva.
-    # Esta función queda como punto de extensión; la resolución principal usa
-    # las URLs que el parser base pueda conservar en datos_json.
     datos = texto or ""
     m = re.search(r"https?://[^\s<>"]+", datos, re.I)
     return m.group(0).rstrip(".,;)") if m else None
 
 
 def _resolver_organismo(titulo: str, organismo: str | None) -> tuple[int | None, str]:
-    evidencia = base._sin_acentos(f"{titulo} {organismo or ''}")
+    raw = (organismo or "").strip()
+    evidencia = base._sin_acentos(f"{titulo} {raw}")
     externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia", "istecdigital", "iislafe", "instituto de investigacion sanitaria la fe")
     if any(marca in evidencia for marca in externos):
         return None, "organismo_externo"
-    org_normal = base._sin_acentos(organismo or "")
+
+    # Si la evidencia es una URL, analizar el host ANTES de normalizarla:
+    # _sin_acentos() elimina puntuación y por tanto no sirve para detectar
+    # correctamente dominios como *.gva.es.
+    host = ""
+    try:
+        candidata = raw if "://" in raw else f"https://{raw}"
+        host = urlparse(candidata).netloc.lower().split(":", 1)[0].rstrip(".")
+    except Exception:
+        host = ""
+
+    if host == "cjusticia.gva.es" or host.endswith(".istecdigital.es") or host.endswith(".iislafe.es"):
+        return None, "organismo_externo"
+    if host == "gva.es" or host.endswith(".gva.es"):
+        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
+
+    org_normal = base._sin_acentos(raw)
     if not org_normal:
         return None, "organismo_no_identificado"
-    # El enlace oficial es la evidencia más estable disponible en estas fichas.
-    # Los subdominios/portales GVA se consideran Generalitat salvo excepciones
-    # conocidas que publican procesos de organismos externos.
-    if "cjusticia.gva.es" in org_normal or "istecdigital.es" in org_normal or "iislafe.es" in org_normal:
-        return None, "organismo_externo"
-    if ".gva.es" in org_normal or "generalitat valenciana" in org_normal:
-        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
-    if org_normal.startswith("conselleria ") or "labora" in org_normal or "agencia valenciana" in org_normal or "institut valencia" in org_normal or "instituto valenciano" in org_normal or "turisme comunitat valenciana" in org_normal:
+    if org_normal.startswith("conselleria ") or "labora" in org_normal or "agencia valenciana" in org_normal or "institut valencia" in org_normal or "instituto valenciano" in org_normal or "turisme comunitat valenciana" in org_normal or "generalitat valenciana" in org_normal:
         return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
     return None, "organismo_no_pertenece_a_generalitat"
 
@@ -88,7 +95,6 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     texto = proceso["publicacion"]["contenido_texto"]
     titulo = proceso["denominacion"]
     organismo = _extraer_organismo(texto)
-    # El parser base puede haber conservado el enlace del organismo en datos_json.
     organismo_enlace = (proceso.get("datos_json") or {}).get("organismo_url") or (proceso.get("datos_json") or {}).get("url_organismo")
     organismo_evidencia = organismo_enlace or organismo
     organismo_id, motivo = _resolver_organismo(titulo, organismo_evidencia)
