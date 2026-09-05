@@ -9,7 +9,13 @@ from .database import get_connection
 
 def _tipo_convocatoria(texto: str) -> str | None:
     normal = base._sin_acentos(texto)
-    m = re.search(r"convocatoria\s+(.{1,120}?)\s+prueba\s+", normal, re.I)
+    # Hay fichas GVA que no tienen campo "Prueba" (especialmente bolsas
+    # de Sanidad). En esas fichas el tipo termina antes de Grupo/Titulación.
+    m = re.search(
+        r"convocatoria\s+(.{1,120}?)(?:\s+prueba\s+|\s+grupo\s+|\s+titulacion\s+|\s+enlace a organismo\s+)",
+        normal,
+        re.I,
+    )
     if not m:
         return None
     valor = base._normalizar(m.group(1))
@@ -63,8 +69,6 @@ def _es_incluido(tipo: str | None) -> bool:
     )
 
 
-# Sustituimos las funciones usadas internamente por gva_clean, sin duplicar
-# el importador ni alterar su lógica de persistencia/idempotencia.
 base._tipo_convocatoria = _tipo_convocatoria
 base._es_incluido = _es_incluido
 
