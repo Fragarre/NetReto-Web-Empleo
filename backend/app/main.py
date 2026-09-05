@@ -93,10 +93,12 @@ def debug_bop(x_import_secret: str | None = Header(default=None)) -> dict[str, A
 @app.post("/admin/import/bop-valencia")
 def importar_bop_valencia_endpoint(
     x_import_secret: str | None = Header(default=None),
+    historico: bool = Query(default=False),
+    dias: int = Query(default=250, ge=1, le=730),
 ) -> dict[str, Any]:
     """Importa los anuncios de empleo de la Diputación publicados en el BOP."""
     _validar_import_secret(x_import_secret)
     try:
-        return importar_bop_valencia()
+        return importar_bop_valencia(historico=historico, dias=dias)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia: {exc}") from exc
