@@ -16,12 +16,12 @@ BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
 
 def _contenedor_anuncio(a: Any) -> Any | None:
     cont = a
-    for _ in range(12):
+    for _ in range(16):
         cont = cont.parent
         if cont is None:
             return None
         texto = cont.get_text(" ", strip=True)
-        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I):
+        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I) and re.search(r"Anunci\b", texto, re.I):
             return cont
     return None
 
@@ -60,9 +60,13 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
 
 
 def _ajax_html(response_text: str) -> str:
-    # Render no debe depender de un parser XML (lxml).
+    # PrimeFaces devuelve el HTML de los componentes dentro de CDATA.
+    # Extraer CDATA primero evita que el HTML quede convertido en texto literal.
     if "<partial-response" not in response_text:
         return response_text
+    bloques = re.findall(r"<!\[CDATA\[(.*?)\]\]>", response_text, flags=re.S)
+    if bloques:
+        return "\n".join(bloques)
     soup = BeautifulSoup(response_text, "html.parser")
     return "\n".join(u.decode_contents() for u in soup.find_all("update"))
 
@@ -126,10 +130,12 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
     fechas = [desde + timedelta(days=i) for i in range((hoy - desde).days + 1)]
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
+
     def obtener(fecha: date) -> tuple[date, str | None, str | None]:
         headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
         with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as c:
             return _obtener_pagina(c, fecha)
+
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(obtener, fecha) for fecha in fechas]
         for future in as_completed(futures):
@@ -160,7 +166,25 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         soup = BeautifulSoup(r0.text, "html.parser")
         forms = soup.find_all("form")
         _, html, error = _obtener_pagina(client, fecha_obj)
-        return {"fecha_solicitada": fecha, "error": error, "get_url": str(r0.url), "get_status": r0.status_code, "get_html": len(r0.text), "form_ids": [f.get("id") for f in forms], "forms": [{"id": f.get("id"), "action": f.get("action"), "inputs": [i.get("name") for i in f.find_all("input") if i.get("name")][:40]} for f in forms[:10]], "post_html": len(html or ""), "anuncios_parser": len(_extraer_anuncios_pagina(html or "")), "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)))[:20], "contiene_10873": "2026/10873" in (html or "")}
+        return {
+            "fecha_solicitada": fecha,
+            "error": error,
+            "get_url": str(r0.url),
+            "get_status": r0.status_code,
+            "get_html": len(r0.text),
+            "form_ids": [f.get("id") for f in forms],
+            "forms": [{"id": f.get("id"), "action": f.get("action"), "inputs": [i.get("name") for i in f.find_all("input") if i.get("name")][:40]} for f in forms[:10]],
+            "post_html": len(html or ""),
+            "anuncios_parser": len(_extraer_anuncios_pagina(html or "")),
+            "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)))[:20],
+            "contiene_10873": "2026/10873" in (html or ""),
+        }
     r = client.get(_bop.BOP_URL)
     r.raise_for_status()
-    return {"url": str(r.url), "status": r.status_code, "ancho_html": len(r.text), "anuncios_parser": len(_extraer_anuncios_pagina(r.text)), "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)))[:20]}
+    return {
+        "url": str(r.url),
+        "status": r.status_code,
+        "ancho_html": len(r.text),
+        "anuncios_parser": len(_extraer_anuncios_pagina(r.text)),
+        "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)))[:20],
+    }
