@@ -114,7 +114,9 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     organismo_evidencia = organismo_enlace or organismo_texto
     organismo_id, motivo = _resolver_organismo(titulo, organismo_evidencia)
     proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
-    proceso["turno"] = _turno(f"{titulo} {texto}")
+    # La denominación oficial tiene prioridad absoluta para el turno.
+    # El resto del texto puede mencionar otros turnos en referencias normativas.
+    proceso["turno"] = _turno(titulo) or _turno(texto)
     proceso["organismo_id"] = organismo_id
     proceso["datos_json"] = {**(proceso.get("datos_json") or {}), "organismo_detectado": organismo_evidencia, "organismo_id_resuelto": organismo_id, "organismo_motivo": motivo}
     return proceso
