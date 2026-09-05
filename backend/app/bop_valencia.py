@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import date, datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from bs4 import BeautifulSoup
@@ -14,12 +16,13 @@ from psycopg.types.json import Jsonb
 from .database import get_connection
 
 BOP_URL = "https://bop.dival.es/bop/"
+BOP_PORTAL_URL = "https://bop.dival.es/bop/xhtml/portal.xhtml"
 DOWNLOAD_URL = "https://bop.dival.es/bop/downloads"
 ORGANISMO_ID = 2
 FUENTE_ID = 2
 
 INCLUIDOS = ("convocatoria", "proceso selectivo", "selección", "seleccion", "oposición", "oposicion", "bolsa de trabajo", "bolsa de empleo")
-EXCLUIDOS = ("provisión del puesto", "provision del puesto", "provisión de puestos", "provision de puestos", "provisión del lugar", "provision del lloc", "libre designación", "libre designacion", "nomenamiento", "nomenament")
+EXCLUIDOS = ("provisión del puesto", "provision del puesto", "provisión de puestos", "provision de puestos", "provisión del lugar", "provision del lloc", "libre designación", "libre designacion")
 
 
 def _norm(s: str) -> str:
@@ -39,7 +42,7 @@ def _fecha(s: str | None) -> date | None:
 
 
 def _convocatoria(s: str) -> str | None:
-    m = re.search(r"convocatoria\s+([A-Z]?\s*\d{1,3}/\d{2,4})", _sin(s))
+    m = re.search(r"convocatoria\s+([A-Z]?\s*\d{1,3}/\d{2,4})", _sin(s), re.I)
     return re.sub(r"\s+", "", m.group(1)).upper() if m else None
 
 
@@ -55,7 +58,13 @@ def _anio_convocatoria(s: str) -> int | None:
 
 
 def _plazas(s: str) -> int | None:
-    for p in (r"selecci[oó]n de\s+(\d+)\s+plazas?", r"selecci[oó]n de una plaza", r"convocatoria de\s+(\d+)\s+plazas?"):
+    patrones = (
+        r"(?:selecci[oó]n|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?)",
+        r"(?:selecci[oó]n|seleccio)\s+de\s+una\s+(?:plaza|plaça|place)",
+        r"convocatoria\s+de\s+(\d+)\s+(?:plazas?|places?)",
+        r"selecci[oó]n\s+de\s+(\d+)\s+(?:plazas?|places?)",
+    )
+    for p in patrones:
         m = re.search(p, s, re.I)
         if m:
             return int(m.group(1)) if m.lastindex else 1
@@ -71,7 +80,7 @@ def _turno(s: str) -> str | None:
     n = _sin(s)
     if "promocion interna" in n:
         return "PROMOCION_INTERNA"
-    if "turno libre" in n or "oposicion libre" in n:
+    if "turno libre" in n or "oposicion lliure" in n or "oposicion libre" in n:
         return "TURNO_LIBRE"
     if "estabilizacion" in n:
         return "ESTABILIZACION"
@@ -80,11 +89,11 @@ def _turno(s: str) -> str | None:
 
 def _tipo(s: str) -> str:
     n = _sin(s)
-    if "bolsa de trabajo" in n or "bolsa de empleo" in n:
+    if "bolsa de trabajo" in n or "bolsa de empleo" in n or "borsa de treball" in n:
         return "Bolsa de trabajo"
-    if "concurso-oposicion" in n or "concurso oposicion" in n:
+    if "concurso-oposicion" in n or "concurso oposicion" in n or "concurs-oposicio" in n or "concurs oposicio" in n:
         return "Concurso-oposición"
-    if "oposicion" in n:
+    if "oposicion" in n or "oposicio" in n:
         return "Oposición"
     return "Proceso selectivo"
 
@@ -156,10 +165,12 @@ def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
     }
 
 
-def descubrir_anuncios(client: httpx.Client) -> list[dict[str, Any]]:
-    r = client.get(BOP_URL)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
+def _pagina_bop_url(fecha: date) -> str:
+    return f"{BOP_PORTAL_URL}?fecha={quote(fecha.strftime('%d/%m/%Y'))}"
+
+
+def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
+    soup = BeautifulSoup(html, "html.parser")
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
     for a in soup.find_all("a"):
@@ -175,7 +186,47 @@ def descubrir_anuncios(client: httpx.Client) -> list[dict[str, Any]]:
         if not registro or registro in vistos:
             continue
         vistos.add(registro)
-        resultados.append({"titulo": titulo, "url": f"{DOWNLOAD_URL}?anuncioCSV={registro}&lang=es", "registro": registro, "fecha_publicacion": fecha})
+        resultados.append({
+            "titulo": titulo,
+            "url": f"{DOWNLOAD_URL}?anuncioCSV={registro}&lang=es",
+            "registro": registro,
+            "fecha_publicacion": fecha,
+        })
+    return resultados
+
+
+def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None, str | None]:
+    try:
+        r = client.get(_pagina_bop_url(fecha))
+        r.raise_for_status()
+        return fecha, r.text, None
+    except Exception as exc:
+        return fecha, None, str(exc)
+
+
+def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int = 1) -> list[dict[str, Any]]:
+    if not historico:
+        r = client.get(BOP_URL)
+        r.raise_for_status()
+        return _extraer_anuncios_pagina(r.text)
+
+    hoy = date.today()
+    desde = hoy - timedelta(days=max(0, dias - 1))
+    fechas = [desde + timedelta(days=i) for i in range((hoy - desde).days + 1)]
+    resultados: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(_obtener_pagina, client, fecha) for fecha in fechas]
+        for future in as_completed(futures):
+            _, html, _ = future.result()
+            if not html:
+                continue
+            for anuncio in _extraer_anuncios_pagina(html):
+                registro = anuncio["registro"]
+                if registro not in vistos:
+                    vistos.add(registro)
+                    resultados.append(anuncio)
+    resultados.sort(key=lambda x: (x["fecha_publicacion"] or date.min, x["registro"]))
     return resultados
 
 
@@ -195,11 +246,11 @@ def _identificador_estable(titulo: str, texto: str) -> str:
     return "DVAL:T:" + hashlib.sha256(_sin(titulo).encode("utf-8")).hexdigest()[:24]
 
 
-def importar_bop_valencia() -> dict[str, Any]:
+def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, Any]:
     stats: dict[str, Any] = {"descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "anuncios": []}
     headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
-        anuncios = descubrir_anuncios(client)
+        anuncios = descubrir_anuncios(client, historico=historico, dias=dias)
         stats["descubiertos"] = len(anuncios)
         with get_connection() as connection:
             with connection.cursor() as cursor:
