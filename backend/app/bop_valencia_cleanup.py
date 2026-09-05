@@ -59,11 +59,23 @@ def normalizar_bop_prueba() -> dict[str, int]:
             cursor.execute(
                 """
                 UPDATE procesos
-                   SET fecha_convocatoria = NULL,
+                   SET identificador_estable = 'DVAL:149/22E',
+                       fecha_convocatoria = NULL,
+                       plazas = CASE codigo_externo
+                           WHEN '2026/10873' THEN 1
+                           WHEN '2026/10875' THEN 3
+                           WHEN '2026/10878' THEN 1
+                           WHEN '2026/10879' THEN 4
+                           WHEN '2026/10881' THEN 1
+                           ELSE plazas
+                       END,
                        updated_at = NOW()
                  WHERE organismo_id = 2
                    AND codigo_externo = ANY(%s)
-                   AND fecha_convocatoria = DATE '2026-09-02'
+                   AND (
+                       fecha_convocatoria = DATE '2026-09-02'
+                       OR codigo_externo IN ('2026/10873','2026/10875','2026/10878','2026/10879','2026/10881')
+                   )
                 """,
                 (list(REGISTROS_VALIDOS_PRUEBA),),
             )
