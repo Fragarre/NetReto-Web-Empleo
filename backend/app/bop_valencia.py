@@ -127,23 +127,33 @@ def _diagnostico_candidato(a: Any) -> dict[str, Any]:
         })
         if re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I):
             break
-    return {"titulo": _norm(a.get_text(" ", strip=True)), "id": a.get("id"), "chain": chain}
+    return {"titulo": _norm(a.get_text(" ", strip=True)), "id": a.get("id"), "class": a.get("class"), "onclick": a.get("onclick"), "chain": chain}
 
 
 def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
     r = client.get(BOP_URL)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
+    anchors = soup.find_all("a")
+    commandlinks = [a for a in anchors if "ui-commandlink" in " ".join(a.get("class", []))]
     candidatos = []
-    for a in soup.find_all("a"):
+    for a in anchors:
         titulo = _norm(a.get_text(" ", strip=True))
-        if not titulo:
-            continue
         n = _sin(titulo)
-        if "diputacion provincial de valencia" in n and "ui-commandlink" in " ".join(a.get("class", [])):
-            if _incluido(titulo):
-                candidatos.append(_diagnostico_candidato(a))
-    return {"url": BOP_URL, "status": r.status_code, "ancho_html": len(r.text), "candidatos": candidatos[:20]}
+        if not titulo or "anunci" not in n:
+            continue
+        candidatos.append(_diagnostico_candidato(a))
+        if len(candidatos) >= 20:
+            break
+    return {
+        "url": str(r.url),
+        "status": r.status_code,
+        "ancho_html": len(r.text),
+        "total_anchors": len(anchors),
+        "commandlinks": len(commandlinks),
+        "anuncios_detectados": len(candidatos),
+        "candidatos": candidatos,
+    }
 
 
 def descubrir_anuncios(client: httpx.Client) -> list[dict[str, Any]]:
@@ -221,7 +231,7 @@ def importar_bop_valencia() -> dict[str, Any]:
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     cursor.execute("SELECT 1 FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
                     if cursor.fetchone() is None:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]})))
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]})))
                         stats["publicaciones"] += 1
                     stats["anuncios"].append({"registro": registro, "titulo": titulo, "fecha_publicacion": fecha.isoformat() if fecha else None, "proceso_id": proceso_id, "identificador_estable": estable})
             connection.commit()
