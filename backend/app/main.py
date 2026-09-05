@@ -2,8 +2,10 @@ from typing import Any
 import hmac
 import os
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
+from ..access import EmploymentAccess, exigir_employment_access
+from ..auth import UsuarioAutenticado, usuario_actual
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
@@ -15,52 +17,106 @@ from .seguimiento import preparar_notificaciones, listar_notificaciones_pendient
 
 app = FastAPI(title="NetReto Empleo API", version="0.1.0")
 
+
+def _usuario_con_empleo(
+    usuario: UsuarioAutenticado = Depends(usuario_actual),
+) -> UsuarioAutenticado:
+    exigir_employment_access(usuario.id)
+    return usuario
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "netreto-empleo"}
 
+
+@app.get("/me")
+def me(usuario: UsuarioAutenticado = Depends(usuario_actual)) -> dict[str, Any]:
+    acceso = exigir_employment_access(usuario.id)
+    return {
+        "id": str(usuario.id),
+        "email": usuario.email,
+        "employment_access": acceso.employment_access,
+        "subscribed": acceso.subscribed,
+    }
+
+
 @app.get("/organismos")
-def organismos(solo_activos: bool = Query(True)) -> list[dict[str, Any]]:
+def organismos(
+    solo_activos: bool = Query(True),
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
     return listar_organismos(solo_activos=solo_activos)
 
+
 @app.get("/organismos/{organismo_id}")
-def organismo(organismo_id: int) -> dict[str, Any]:
+def organismo(
+    organismo_id: int,
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
     resultado = obtener_organismo(organismo_id)
     if resultado is None:
         raise HTTPException(status_code=404, detail="Organismo no encontrado")
     return resultado
 
+
 @app.get("/fuentes")
-def fuentes(organismo_id: int | None = Query(None), solo_activas: bool = Query(True)) -> list[dict[str, Any]]:
+def fuentes(
+    organismo_id: int | None = Query(None),
+    solo_activas: bool = Query(True),
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
     return listar_fuentes(organismo_id=organismo_id, solo_activas=solo_activas)
 
+
 @app.get("/procesos")
-def procesos(organismo_id: int | None = Query(default=None), estado: str | None = Query(default=None), limite: int = Query(default=100, ge=1, le=200)) -> list[dict[str, Any]]:
+def procesos(
+    organismo_id: int | None = Query(default=None),
+    estado: str | None = Query(default=None),
+    limite: int = Query(default=100, ge=1, le=200),
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
     return listar_procesos(organismo_id=organismo_id, estado=estado, limite=limite)
 
+
 @app.get("/procesos/{proceso_id}")
-def proceso(proceso_id: int) -> dict[str, Any]:
+def proceso(
+    proceso_id: int,
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
     resultado = obtener_proceso(proceso_id)
     if resultado is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     return resultado
 
+
 @app.get("/procesos/{proceso_id}/publicaciones")
-def publicaciones_proceso(proceso_id: int, limite: int = Query(default=100, ge=1, le=200)) -> list[dict[str, Any]]:
+def publicaciones_proceso(
+    proceso_id: int,
+    limite: int = Query(default=100, ge=1, le=200),
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
     if obtener_proceso(proceso_id) is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     return listar_publicaciones(proceso_id=proceso_id, limite=limite)
 
+
 @app.get("/procesos/{proceso_id}/cambios")
-def cambios_proceso(proceso_id: int, limite: int = Query(default=100, ge=1, le=200)) -> list[dict[str, Any]]:
+def cambios_proceso(
+    proceso_id: int,
+    limite: int = Query(default=100, ge=1, le=200),
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
     if obtener_proceso(proceso_id) is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     return listar_cambios(proceso_id=proceso_id, limite=limite)
+
 
 def _validar_import_secret(x_import_secret: str | None) -> None:
     secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
     if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
         raise HTTPException(status_code=403, detail="No autorizado")
+
 
 @app.post("/admin/seguimiento/preparar-notificaciones")
 def preparar_notificaciones_endpoint(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
@@ -69,6 +125,7 @@ def preparar_notificaciones_endpoint(x_import_secret: str | None = Header(defaul
         return preparar_notificaciones()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error preparando notificaciones: {exc}") from exc
+
 
 @app.get("/admin/seguimiento/notificaciones-pendientes")
 def notificaciones_pendientes_endpoint(
@@ -80,6 +137,7 @@ def notificaciones_pendientes_endpoint(
         return listar_notificaciones_pendientes(limite=limite)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error listando notificaciones: {exc}") from exc
+
 
 @app.post("/admin/import/gva")
 def importar_gva_endpoint(
@@ -96,6 +154,7 @@ def importar_gva_endpoint(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
 
+
 @app.post("/admin/cleanup/gva-stale")
 def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
@@ -104,13 +163,15 @@ def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dic
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en limpieza GVA: {exc}") from exc
 
+
 @app.post("/admin/cleanup/gva-turnos")
 def cleanup_gva_turnos(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
     _validar_import_secret(x_import_secret)
     try:
         return corregir_turnos_gva()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en corrección de turnos GVA: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Error en corrección de turnos: {exc}") from exc
+
 
 @app.post("/admin/cleanup/gva-navegacion")
 def cleanup_gva_navegacion(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
@@ -120,25 +181,38 @@ def cleanup_gva_navegacion(x_import_secret: str | None = Header(default=None)) -
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en limpieza GVA: {exc}") from exc
 
+
 @app.get("/admin/debug/bop")
-def debug_bop(x_import_secret: str | None = Header(default=None), fecha: str | None = Query(default=None)) -> dict[str, Any]:
+def debug_bop(
+    x_import_secret: str | None = Header(default=None),
+    fecha: str | None = Query(default=None),
+) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
     try:
         import httpx
-        headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
+        headers = {
+            "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
+            "Accept-Language": "es-ES,es;q=0.9",
+        }
         with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
             return diagnosticar_bop(client, fecha=fecha)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en diagnóstico BOP: {exc}") from exc
 
+
 @app.post("/admin/import/bop-valencia")
-def importar_bop_valencia_endpoint(x_import_secret: str | None = Header(default=None), historico: bool = Query(default=False), dias: int = Query(default=250, ge=1, le=730)) -> dict[str, Any]:
+def importar_bop_valencia_endpoint(
+    x_import_secret: str | None = Header(default=None),
+    historico: bool = Query(default=False),
+    dias: int = Query(default=250, ge=1, le=730),
+) -> dict[str, Any]:
     """Importa los anuncios de empleo de la Diputación publicados en el BOP."""
     _validar_import_secret(x_import_secret)
     try:
         return importar_bop_valencia(historico=historico, dias=dias)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia: {exc}") from exc
+
 
 @app.post("/admin/cleanup/bop-valencia-no-empleo")
 def cleanup_bop_valencia_no_empleo(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
@@ -147,6 +221,7 @@ def cleanup_bop_valencia_no_empleo(x_import_secret: str | None = Header(default=
         return limpiar_anuncios_no_empleo()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en limpieza BOP Valencia: {exc}") from exc
+
 
 @app.post("/admin/cleanup/bop-valencia-normalizar-prueba")
 def cleanup_bop_valencia_normalizar_prueba(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
