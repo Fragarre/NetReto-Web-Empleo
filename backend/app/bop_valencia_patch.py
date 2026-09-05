@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 import re
@@ -99,11 +99,9 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
 
 def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str, Any]:
     if fecha:
-        d = datetime.strptime(fecha, "%d/%m/%Y").date()
         r = client.get(f"{BOP_PORTAL_URL}?fecha={quote(fecha)}")
     else:
         r = client.get(_bop.BOP_URL)
-        d = None
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
     texto = _bop._norm(soup.get_text(" ", strip=True))
@@ -114,7 +112,7 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         "status": r.status_code,
         "ancho_html": len(r.text),
         "contiene_10873": "2026/10873" in r.text,
-        "contiene_texto_diputacion": "Diputació Provincial de València" in texto or "Diputación Provincial de Valencia" in texto,
+        "contiene_texto_diputacion": "diputació provincial de valència" in _bop._sin(texto),
         "commandlinks": len(commandlinks),
         "anuncios_parser": len(_extraer_anuncios_pagina(r.text)),
         "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
