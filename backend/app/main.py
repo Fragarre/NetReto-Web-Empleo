@@ -6,7 +6,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
-from .gva_fix import importar_gva_robusto
+from .gva_clean import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
 
