@@ -53,9 +53,24 @@ def limpiar_anuncios_no_empleo() -> dict[str, int]:
 
 
 def normalizar_bop_prueba() -> dict[str, int]:
-    """Corrige valores de la primera prueba que no deben confundirse con la publicación del BOP."""
+    """Corrige los datos de la primera prueba evitando conflictos con el identificador estable."""
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            # El proceso 10881 fue creado con el identificador truncado DVAL:149/22.
+            # Solo se corrige si el identificador correcto todavía no existe.
+            cursor.execute(
+                """
+                SELECT 1
+                  FROM procesos
+                 WHERE identificador_estable = 'DVAL:149/22E'
+                   AND NOT (organismo_id = 2 AND codigo_externo = '2026/10881')
+                 LIMIT 1
+                """
+            )
+            conflicto = cursor.fetchone()
+            if conflicto:
+                raise ValueError("Ya existe otro proceso con identificador estable DVAL:149/22E")
+
             cursor.execute(
                 """
                 UPDATE procesos
