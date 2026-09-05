@@ -4,8 +4,8 @@ import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
-from ..access import EmploymentAccess, exigir_employment_access
-from ..auth import UsuarioAutenticado, usuario_actual
+from access import EmploymentAccess, exigir_employment_access
+from auth import UsuarioAutenticado, usuario_actual
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
