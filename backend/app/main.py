@@ -48,7 +48,11 @@ def _validar_import_secret(x_import_secret: str | None) -> None:
         raise HTTPException(status_code=403, detail="No autorizado")
 
 @app.post("/admin/import/gva")
-def importar_gva_endpoint(x_import_secret: str | None = Header(default=None), max_paginas: int = Query(default=1, ge=1, le=10), max_detalles: int | None = Query(default=10, ge=1, le=100)) -> dict[str, Any]:
+def importar_gva_endpoint(
+    x_import_secret: str | None = Header(default=None),
+    max_paginas: int = Query(default=3, ge=1, le=10),
+    max_detalles: int | None = Query(default=None, ge=1, le=300),
+) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
     try:
         return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
