@@ -42,11 +42,27 @@ def _extraer_organismo(texto: str) -> str | None:
     m_etapa = re.search(r"\bEtapa actual\s*:", normal, re.I)
     if not m_etapa:
         return None
+
+    # La página contiene una navegación global que repite decenas de
+    # organismos. El organismo real aparece en el bloque final, justo antes
+    # de "Etapa actual:". Tomamos solo el contenido posterior al último
+    # "Atrás" de ese bloque para evitar contaminar la evidencia con el menú.
     previo = normal[:m_etapa.start()]
-    patrones = (r"Conselleria\s+[^:]{1,180}", r"Labora\s+[^:]{1,180}", r"Ag[eè]ncia\s+[^:]{1,180}", r"Institut\s+[^:]{1,180}", r"Instituto\s+[^:]{1,180}", r"Turisme Comunitat Valenciana", r"Generalitat Valenciana")
+    m_atras = list(re.finditer(r"\bAtrás\b", previo, re.I))
+    bloque = previo[m_atras[-1].end():] if m_atras else previo[-2500:]
+
+    patrones = (
+        r"Conselleria\s+[^:]{1,180}",
+        r"Labora\s+[^:]{1,180}",
+        r"Ag[eè]ncia\s+[^:]{1,180}",
+        r"Institut\s+[^:]{1,180}",
+        r"Instituto\s+[^:]{1,180}",
+        r"Turisme Comunitat Valenciana",
+        r"Generalitat Valenciana",
+    )
     candidatos = []
     for patron in patrones:
-        for m in re.finditer(patron, previo, re.I):
+        for m in re.finditer(patron, bloque, re.I):
             candidatos.append((m.start(), base._normalizar(m.group(0))))
     return max(candidatos, key=lambda x: x[0])[1] if candidatos else None
 
