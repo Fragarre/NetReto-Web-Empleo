@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote
+import re
 
 import httpx
 from bs4 import BeautifulSoup
@@ -13,19 +14,31 @@ from . import bop_valencia as _bop
 BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
 
 
-def _es_diputacion_valencia(a: Any) -> bool:
-    """Comprueba la entidad en el contenedor del anuncio, no en el enlace del título."""
+def _contenedor_anuncio(a: Any) -> Any | None:
+    """Busca el bloque del anuncio a partir del enlace, usando el registro como ancla."""
     cont = a
-    for _ in range(20):
+    for _ in range(12):
         cont = cont.parent
         if cont is None:
-            break
-        texto = _bop._norm(cont.get_text(" ", strip=True))
-        if "diputacion provincial de valencia" in _bop._sin(texto):
-            return True
-        if _bop.re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, _bop.re.I):
-            return False
-    return False
+            return None
+        texto = cont.get_text(" ", strip=True)
+        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(
+            r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I
+        ):
+            return cont
+    return None
+
+
+def _titulo_desde_contenedor(cont: Any) -> str:
+    texto = cont.get_text(" ", strip=True)
+    m = re.search(
+        r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro))",
+        texto,
+        re.I,
+    )
+    if m:
+        return _bop._norm(m.group(1))
+    return _bop._norm(texto)
 
 
 def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
@@ -34,17 +47,29 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
     vistos: set[str] = set()
 
     for a in soup.find_all("a"):
-        titulo = _bop._norm(a.get_text(" ", strip=True))
-        if not titulo or not _bop._incluido(titulo):
-            continue
         if "ui-commandlink" not in " ".join(a.get("class", [])):
             continue
-        if not _es_diputacion_valencia(a):
+
+        cont = _contenedor_anuncio(a)
+        if cont is None:
+            continue
+
+        texto_cont = _bop._norm(cont.get_text(" ", strip=True))
+        titulo = _titulo_desde_contenedor(cont)
+
+        # La entidad debe estar en el bloque del anuncio, no necesariamente en el <a>.
+        if "diputacion provincial de valencia" not in _bop._sin(texto_cont):
+            continue
+        if not _bop._incluido(titulo):
             continue
 
         registro, fecha = _bop._extraer_metadatos(a)
+        if not registro:
+            m = re.search(r"\b(\d{4}/\d+)\b", texto_cont)
+            registro = m.group(1) if m else None
         if not registro or registro in vistos:
             continue
+
         vistos.add(registro)
         resultados.append({
             "titulo": titulo,
@@ -94,7 +119,6 @@ def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None
 
 
 def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, Any]:
-    """Usa el importador existente con un extractor que localiza la Diputación en el contenedor del anuncio."""
     _bop.descubrir_anuncios = descubrir_anuncios
     return _bop.importar_bop_valencia(historico=historico, dias=dias)
 
