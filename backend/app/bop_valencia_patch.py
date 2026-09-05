@@ -14,106 +14,48 @@ from . import bop_valencia as _bop
 BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
 
 
-def _contenedor_anuncio(a: Any) -> Any | None:
-    cont = a
-    for _ in range(16):
-        cont = cont.parent
-        if cont is None:
-            return None
-        texto = cont.get_text(" ", strip=True)
-        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I) and re.search(r"Anunci\b", texto, re.I):
-            return cont
-    return None
-
-
-def _titulo_desde_contenedor(cont: Any) -> str:
-    texto = cont.get_text(" ", strip=True)
-    m = re.search(r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro))", texto, re.I)
-    return _bop._norm(m.group(1)) if m else _bop._norm(texto)
-
-
 def _extraer_anuncios_por_texto(html: str) -> list[dict[str, Any]]:
-    """Extrae anuncios desde el texto visible del resultado del BOP, sin depender del HTML."""
+    """Extrae anuncios desde texto plano: cada bloque empieza en Anunci y termina en Núm. registre."""
     texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
-    resultados: list[dict[str, Any]] = []
-    vistos: set[str] = set()
-
-    # Cada anuncio tiene la forma: Anunci ... Núm. registre: YYYY/NNNNN ...
-    # Capturamos cada pareja directamente, limitando el título al bloque anterior.
     patron = re.compile(
-        r"(?P<titulo>Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(?P<registro>\d{4}/\d+))",
+        r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+))",
         re.I,
     )
-    registros = list(re.finditer(
-        r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)",
-        texto, re.I,
-    ))
-
-    for mr in registros:
-        registro = mr.group(1)
-        if registro in vistos:
+    resultados: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    for m in patron.finditer(texto):
+        titulo = _bop._norm(m.group(1))
+        registro = re.search(
+            r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)",
+            texto[m.start():m.end() + 100],
+            re.I,
+        )
+        if not registro:
             continue
-
-        # Buscar el último "Anunci" anterior al registro dentro de un margen amplio.
-        inicio = max(0, mr.start() - 5000)
-        bloque = texto[inicio:mr.start()]
-        anuncios = list(re.finditer(r"Anunci\b", bloque, re.I))
-        if not anuncios:
-            continue
-        titulo = _bop._norm(bloque[anuncios[-1].start():])
-
-        # El encabezado del resultado identifica la sección administrativa.
-        # Admitimos tanto castellano como la forma valenciana del organismo.
-        organismo = _bop._sin(titulo)
-        if "diputacion provincial de valencia" not in organismo:
+        numero = registro.group(1)
+        n = _bop._sin(titulo)
+        if "diputacion provincial de valencia" not in n:
             continue
         if not _bop._incluido(titulo):
             continue
-
-        # La fecha está inmediatamente después del número de registro.
-        posterior = texto[mr.end(): mr.end() + 250]
-        fm = re.search(
-            r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})",
-            posterior,
-            re.I,
-        )
+        if numero in vistos:
+            continue
+        vistos.add(numero)
+        contexto = texto[m.start():m.end() + 150]
+        fm = re.search(r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})", contexto, re.I)
         fecha = _bop._fecha(fm.group(1)) if fm else None
-
-        vistos.add(registro)
         resultados.append({
             "titulo": titulo,
-            "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es",
-            "registro": registro,
+            "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(numero)}&lang=es",
+            "registro": numero,
             "fecha_publicacion": fecha,
         })
-
     return resultados
 
 
 def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
-    soup = BeautifulSoup(html, "html.parser")
-    resultados: list[dict[str, Any]] = []
-    vistos: set[str] = set()
-    for a in soup.find_all("a"):
-        cont = _contenedor_anuncio(a)
-        if cont is None:
-            continue
-        texto_cont = _bop._norm(cont.get_text(" ", strip=True))
-        titulo = _titulo_desde_contenedor(cont)
-        if "diputacion provincial de valencia" not in _bop._sin(texto_cont):
-            continue
-        if not _bop._incluido(titulo):
-            continue
-        registro, fecha = _bop._extraer_metadatos(a)
-        if not registro:
-            m = re.search(r"\b(\d{4}/\d+)\b", texto_cont)
-            registro = m.group(1) if m else None
-        if not registro or registro in vistos:
-            continue
-        vistos.add(registro)
-        resultados.append({"titulo": titulo, "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es", "registro": registro, "fecha_publicacion": fecha})
-    if resultados:
-        return resultados
+    # El BOP devuelve el resultado de búsqueda en HTML/CDATA con una estructura
+    # PrimeFaces cambiante. La extracción por texto es la vía estable.
     return _extraer_anuncios_por_texto(html)
 
 
@@ -224,10 +166,6 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         _, html, error = _obtener_pagina(client, fecha_obj)
         texto = _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True))
         matches = list(re.finditer(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", texto, re.I))
-        muestra = []
-        for m in matches[:5]:
-            inicio = max(0, m.start() - 500)
-            muestra.append(texto[inicio:m.end() + 100])
         return {
             "fecha_solicitada": fecha,
             "error": error,
@@ -239,7 +177,7 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
             "post_html": len(html or ""),
             "anuncios_parser": len(_extraer_anuncios_pagina(html or "")),
             "registro_matches": len(matches),
-            "muestra_registros": muestra,
+            "muestra_registros": [texto[max(0, m.start()-500):m.end()+100] for m in matches[:5]],
             "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
             "contiene_10873": "2026/10873" in (html or ""),
         }
