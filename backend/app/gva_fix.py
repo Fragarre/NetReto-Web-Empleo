@@ -20,6 +20,23 @@ from .gva import (
 ANIOS_INCLUIDOS = {2026, 2027}
 
 
+def _denominacion_gva(texto: str) -> str | None:
+    """Extrae la denominación real de la convocatoria.
+
+    Las páginas actuales de GVA usan un H1 genérico ("Navegación"). El título
+    real aparece en el contenido inmediatamente antes del organismo.
+    """
+    patrones = (
+        r"\b(Convocatoria\s+.+?)(?=\s+(?:Conselleria|LABORA|Labora|Ag[eè]ncia|Institut|Turisme|Etapa actual)\b)",
+        r"\b(Anuncio\s+dif[ií]cil\s+cobertura.+?)(?=\s+(?:Conselleria|LABORA|Labora|Ag[eè]ncia|Institut|Turisme|Etapa actual)\b)",
+    )
+    for patron in patrones:
+        m = re.search(patron, texto, re.IGNORECASE)
+        if m:
+            return " ".join(m.group(1).split())
+    return None
+
+
 def _tipo_convocatoria(texto: str) -> str | None:
     normal = _sin_acentos(texto)
     patrones = (
@@ -50,15 +67,10 @@ def _es_incluido(tipo: str | None) -> bool:
 
 
 def _es_del_ambito_temporal(proceso: dict[str, Any], texto: str) -> bool:
-    """Limita el catálogo a procesos de 2026/2027 o publicados desde 2026.
-
-    Algunos trámites GVA permanentes no contienen año de convocatoria. En esos
-    casos solo se aceptan si su publicación más reciente es de 2026 o posterior.
-    """
+    """Incluye convocatorias 2026/2027 y procesos anteriores con actividad en 2026+."""
     anio = proceso.get("anio_convocatoria")
-    if anio is not None:
-        return anio in ANIOS_INCLUIDOS
-
+    if anio in ANIOS_INCLUIDOS:
+        return True
     fecha_publicacion = proceso["publicacion"].get("fecha_publicacion")
     return bool(fecha_publicacion and fecha_publicacion >= date(2026, 1, 1))
 
@@ -79,6 +91,10 @@ def importar_gva_robusto(*, max_paginas: int = 1, max_detalles: int | None = 5) 
                     respuesta.raise_for_status()
                     proceso = parsear_detalle(url, respuesta.text, id_emp)
                     texto = proceso["publicacion"]["contenido_texto"]
+                    denominacion_real = _denominacion_gva(texto)
+                    if denominacion_real:
+                        proceso["denominacion"] = denominacion_real
+                        proceso["publicacion"]["titulo"] = denominacion_real
                     hash_contenido = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     proceso["publicacion"]["contenido_hash"] = hash_contenido
                     proceso["publicacion"]["referencia"] = f"GVA:{id_emp}:{hash_contenido}"
