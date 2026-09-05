@@ -45,6 +45,32 @@ def _tipo_convocatoria(texto: str) -> str | None:
     return base._normalizar(m.group(1))
 
 
+def _turno(texto: str) -> str | None:
+    """Determina el turno respetando la primera mención explícita.
+
+    Algunas fichas contienen "promoción interna" en otros textos de la
+    página aunque la convocatoria sea de turno libre. El parser anterior
+    daba prioridad global a promoción interna y podía clasificar mal esos
+    casos. En las fichas GVA el encabezado/denominación aparece antes que
+    esos textos auxiliares, por lo que usamos la primera aparición de los
+    indicadores de turno relevantes.
+    """
+    normal = base._sin_acentos(texto)
+    candidatos = []
+    for patron, valor in (
+        ("promocion interna", "PROMOCION_INTERNA"),
+        ("turno libre", "TURNO_LIBRE"),
+        ("discapacidad intelectual", "DISCAPACIDAD_INTELECTUAL"),
+        ("discapacidad", "DISCAPACIDAD"),
+    ):
+        posicion = normal.find(patron)
+        if posicion >= 0:
+            candidatos.append((posicion, valor))
+    if not candidatos:
+        return None
+    return min(candidatos, key=lambda x: x[0])[1]
+
+
 def _es_incluido(tipo: str | None) -> bool:
     normal = base._sin_acentos(tipo or "")
     return any(
@@ -70,6 +96,7 @@ def _es_incluido(tipo: str | None) -> bool:
 
 
 base._tipo_convocatoria = _tipo_convocatoria
+base._turno = _turno
 base._es_incluido = _es_incluido
 
 importar_gva_robusto = base.importar_gva_robusto
