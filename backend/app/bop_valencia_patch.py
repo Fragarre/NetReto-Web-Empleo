@@ -116,15 +116,35 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
 
     formularios = []
     for form in soup.find_all("form"):
+        inputs = []
+        for i in form.find_all(["input", "button"]):
+            if i.get("name") or i.get("id") or i.get("onclick"):
+                inputs.append({
+                    "tag": i.name,
+                    "name": i.get("name"),
+                    "id": i.get("id"),
+                    "type": i.get("type"),
+                    "value": i.get("value"),
+                    "onclick": i.get("onclick"),
+                })
         formularios.append({
             "id": form.get("id"),
             "action": form.get("action"),
             "method": form.get("method"),
-            "inputs": [
-                {"name": i.get("name"), "type": i.get("type"), "value": i.get("value")}
-                for i in form.find_all("input") if i.get("name")
-            ][:80],
+            "inputs": inputs[:120],
         })
+
+    calen = soup.find(attrs={"name": "calen_input"})
+    calen_context = None
+    if calen is not None:
+        parent = calen.parent
+        calen_context = str(parent)[:12000] if parent is not None else str(calen)[:12000]
+
+    scripts_calendario = []
+    for script in soup.find_all("script"):
+        s = script.string or script.get_text() or ""
+        if "calen_input" in s or "j_idt132" in s or "filtroCalendarioIni" in s:
+            scripts_calendario.append(s[:12000])
 
     return {
         "url": str(r.url),
@@ -138,4 +158,6 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
         "historico_links": historico_links[:10],
         "formularios": formularios[:10],
+        "calen_context": calen_context,
+        "scripts_calendario": scripts_calendario[:10],
     }
