@@ -18,14 +18,9 @@ GVA_ORGANISMO_ID = 1
 GVA_FUENTE_ID = 1
 
 TIPOS_INCLUIDOS = (
-    "oposicion",
-    "bolsa de trabajo",
-    "promocion interna",
-    "contratacion laboral temporal",
-    "contratacion laboral indefinida",
-    "proceso de estabilizacion",
-    "acto unico telematico",
-    "acte unic telematic",
+    "oposicion", "bolsa de trabajo", "promocion interna",
+    "contratacion laboral temporal", "contratacion laboral indefinida",
+    "proceso de estabilizacion", "acto unico telematico", "acte unic telematic",
     "anuncio dificil cobertura",
 )
 
@@ -63,11 +58,7 @@ def _denominacion(soup: BeautifulSoup, texto: str) -> str | None:
         valor = re.sub(r"\s*-\s*Sede Electr[oó]nica\s*-\s*Generalitat Valenciana\s*$", "", valor, flags=re.I)
         if valor and valor.lower() != "navegacion":
             return valor
-    m = re.search(
-        r"Empleo público\s+Detalle empleo público\s+Detalle empleo público\s+Atrás\s+(.+?)\s+(?=[A-ZÁÉÍÓÚÜ][^ ]*\s+Etapa actual:|Conselleria\s|Labora\s|Ag[eè]ncia\s)",
-        texto,
-        re.I,
-    )
+    m = re.search(r"Empleo público\s+Detalle empleo público\s+Detalle empleo público\s+Atrás\s+(.+?)\s+(?=[A-ZÁÉÍÓÚÜ][^ ]*\s+Etapa actual:|Conselleria\s|Labora\s|Ag[eè]ncia\s)", texto, re.I)
     return _normalizar(m.group(1)) if m else None
 
 
@@ -78,14 +69,10 @@ def _tipo_convocatoria(texto: str) -> str | None:
         return None
     valor = _normalizar(m.group(1))
     for patron, nombre in (
-        ("bolsa de trabajo", "Bolsa de trabajo"),
-        ("oposicion", "Oposición"),
-        ("promocion interna", "Promoción interna"),
-        ("contratacion laboral temporal", "Contratación laboral temporal"),
-        ("contratacion laboral indefinida", "Contratación laboral indefinida"),
-        ("proceso de estabilizacion", "Proceso de estabilización"),
-        ("acto unico telematico", "Acto único telemático"),
-        ("acte unic telematic", "Acto único telemático"),
+        ("bolsa de trabajo", "Bolsa de trabajo"), ("oposicion", "Oposición"),
+        ("promocion interna", "Promoción interna"), ("contratacion laboral temporal", "Contratación laboral temporal"),
+        ("contratacion laboral indefinida", "Contratación laboral indefinida"), ("proceso de estabilizacion", "Proceso de estabilización"),
+        ("acto unico telematico", "Acto único telemático"), ("acte unic telematic", "Acto único telemático"),
         ("anuncio dificil cobertura", "Anuncio difícil cobertura"),
     ):
         if patron in valor:
@@ -134,10 +121,7 @@ def _estado(texto: str) -> str:
 
 def _ultima_fecha_publicacion(texto: str) -> date | None:
     fechas = []
-    for patron in (
-        r"Fecha publicación\s*:\s*(\d{2}-\d{2}-\d{4})",
-        r"Publicación\s+(?:DOGV[^ ]*\s+)?(?:n[uú]m\.[^ ]+\s+)?(?:de\s+)?(\d{2}-\d{2}-\d{4})",
-    ):
+    for patron in (r"Fecha publicación\s*:\s*(\d{2}-\d{2}-\d{4})", r"Publicación\s+(?:DOGV[^ ]*\s+)?(?:n[uú]m\.[^ ]+\s+)?(?:de\s+)?(\d{2}-\d{2}-\d{4})"):
         fechas.extend(_fecha(x) for x in re.findall(patron, texto, re.I))
     fechas = [x for x in fechas if x]
     return max(fechas) if fechas else None
@@ -160,31 +144,7 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     m_sia = re.search(r"C[oó]digo SIA\s*:?\s*([0-9]+)", texto, re.I)
     codigo_sia = m_sia.group(1) if m_sia else None
     hash_contenido = hashlib.sha256(texto.encode("utf-8")).hexdigest()
-    return {
-        "codigo_externo": codigo_gva,
-        "identificador_estable": f"GVA:{id_emp}",
-        "denominacion": titulo,
-        "grupo": grupo,
-        "tipo_proceso": tipo,
-        "turno": _turno(texto),
-        "plazas": plazas,
-        "estado": _estado(texto),
-        "anio_convocatoria": anio,
-        "fecha_apertura": fecha_apertura,
-        "fecha_cierre": fecha_cierre,
-        "ultima_publicacion_at": datetime.combine(fecha_pub, datetime.min.time(), tzinfo=timezone.utc) if fecha_pub else None,
-        "datos_json": {"id_emp": id_emp, "codigo_gva": codigo_gva, "codigo_sia": codigo_sia, "url_detalle": url},
-        "publicacion": {
-            "referencia": f"GVA:{id_emp}:{hash_contenido}",
-            "tipo": "DETALLE",
-            "titulo": titulo,
-            "fecha_publicacion": fecha_pub,
-            "url": url,
-            "contenido_hash": hash_contenido,
-            "contenido_texto": texto,
-            "datos_json": {"id_emp": id_emp, "codigo_gva": codigo_gva},
-        },
-    }
+    return {"codigo_externo": codigo_gva, "identificador_estable": f"GVA:{id_emp}", "denominacion": titulo, "grupo": grupo, "tipo_proceso": tipo, "turno": _turno(texto), "plazas": plazas, "estado": _estado(texto), "anio_convocatoria": anio, "fecha_apertura": fecha_apertura, "fecha_cierre": fecha_cierre, "ultima_publicacion_at": datetime.combine(fecha_pub, datetime.min.time(), tzinfo=timezone.utc) if fecha_pub else None, "datos_json": {"id_emp": id_emp, "codigo_gva": codigo_gva, "codigo_sia": codigo_sia, "url_detalle": url}, "publicacion": {"referencia": f"GVA:{id_emp}:{hash_contenido}", "tipo": "DETALLE", "titulo": titulo, "fecha_publicacion": fecha_pub, "url": url, "contenido_hash": hash_contenido, "contenido_texto": texto, "datos_json": {"id_emp": id_emp, "codigo_gva": codigo_gva}}}
 
 
 def descubrir_detalles(client: httpx.Client, max_paginas: int = 3) -> list[tuple[int, str]]:
@@ -234,6 +194,10 @@ def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = Non
                     if not _es_incluido(tipo) or not _es_del_ambito(proceso):
                         stats["diagnostico"].append({"id_emp": id_emp, "url": url, "tipo": tipo, "anio_convocatoria": proceso.get("anio_convocatoria"), "fecha_publicacion": proceso["publicacion"].get("fecha_publicacion"), "motivo": "tipo_excluido" if not _es_incluido(tipo) else "fuera_ambito"})
                         continue
+                    organismo_id = proceso.get("organismo_id", GVA_ORGANISMO_ID)
+                    if organismo_id != GVA_ORGANISMO_ID:
+                        stats["diagnostico"].append({"id_emp": id_emp, "tipo": tipo, "organismo": proceso.get("datos_json", {}).get("organismo_detectado"), "motivo": proceso.get("datos_json", {}).get("organismo_motivo", "organismo_externo")})
+                        continue
                     campos = ["denominacion", "grupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_apertura", "fecha_cierre"]
                     cursor.execute("SELECT id, denominacion, grupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_apertura, fecha_cierre FROM procesos WHERE identificador_estable=%s", (proceso["identificador_estable"],))
                     existente = cursor.fetchone()
@@ -245,15 +209,15 @@ def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = Non
                             if anterior != nuevo:
                                 cursor.execute("INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen) VALUES (%s,%s,%s,%s,%s,%s)", (proceso_id, "ACTUALIZACION", campo, str(anterior) if anterior is not None else None, str(nuevo) if nuevo is not None else None, f"Cambio en {campo}: {anterior!r} -> {nuevo!r}"))
                                 stats["cambios"] += 1
-                        cursor.execute("UPDATE procesos SET codigo_externo=%s,denominacion=%s,grupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_apertura=%s,fecha_cierre=%s,ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,datos_json=%s,updated_at=NOW() WHERE id=%s", (proceso["codigo_externo"],proceso["denominacion"],proceso["grupo"],proceso["tipo_proceso"],proceso["turno"],proceso["plazas"],proceso["estado"],proceso["anio_convocatoria"],proceso["fecha_apertura"],proceso["fecha_cierre"],proceso["ultima_publicacion_at"],GVA_FUENTE_ID,Jsonb(proceso["datos_json"]),proceso_id))
+                        cursor.execute("UPDATE procesos SET organismo_id=%s,codigo_externo=%s,denominacion=%s,grupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_apertura=%s,fecha_cierre=%s,ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,datos_json=%s,updated_at=NOW() WHERE id=%s", (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"]), proceso_id))
                     else:
-                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_apertura,fecha_cierre,ultima_publicacion_at,fuente_principal_id,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (GVA_ORGANISMO_ID,proceso["codigo_externo"],proceso["identificador_estable"],proceso["denominacion"],proceso["grupo"],proceso["tipo_proceso"],proceso["turno"],proceso["plazas"],proceso["estado"],proceso["anio_convocatoria"],proceso["fecha_apertura"],proceso["fecha_cierre"],proceso["ultima_publicacion_at"],GVA_FUENTE_ID,Jsonb(proceso["datos_json"])))
+                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_apertura,fecha_cierre,ultima_publicacion_at,fuente_principal_id,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["identificador_estable"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"])))
                         proceso_id = cursor.fetchone()[0]
                     stats["procesos"] += 1
                     pub = proceso["publicacion"]
                     cursor.execute("SELECT 1 FROM publicaciones WHERE proceso_id=%s AND contenido_hash=%s LIMIT 1", (proceso_id, pub["contenido_hash"]))
                     if cursor.fetchone() is None:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id,GVA_FUENTE_ID,pub["referencia"],pub["tipo"],pub["titulo"],pub["fecha_publicacion"],pub["url"],pub["contenido_hash"],pub["contenido_texto"],Jsonb(pub["datos_json"])))
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, GVA_FUENTE_ID, pub["referencia"], pub["tipo"], pub["titulo"], pub["fecha_publicacion"], pub["url"], pub["contenido_hash"], pub["contenido_texto"], Jsonb(pub["datos_json"])))
                         stats["publicaciones"] += 1
             connection.commit()
     return stats
