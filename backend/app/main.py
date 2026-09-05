@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI, Header, HTTPException, Query
 
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
-from .bop_valencia_cleanup import limpiar_anuncios_no_empleo
+from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_fix import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -82,3 +82,11 @@ def cleanup_bop_valencia_no_empleo(x_import_secret: str | None = Header(default=
         return limpiar_anuncios_no_empleo()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en limpieza BOP Valencia: {exc}") from exc
+
+@app.post("/admin/cleanup/bop-valencia-normalizar-prueba")
+def cleanup_bop_valencia_normalizar_prueba(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return normalizar_bop_prueba()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en normalización BOP Valencia: {exc}") from exc
