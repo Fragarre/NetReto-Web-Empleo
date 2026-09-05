@@ -12,36 +12,32 @@ from bs4 import BeautifulSoup
 from . import bop_valencia as _bop
 
 BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
+REGISTRO_RE = re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", re.I)
 
 
 def _extraer_anuncios_por_texto(html: str) -> list[dict[str, Any]]:
-    """Extrae anuncios desde texto plano: cada bloque empieza en Anunci y termina en Núm. registre."""
+    """Extrae cada anuncio buscando su registro y tomando el último 'Anunci' anterior."""
     texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
-    patron = re.compile(
-        r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+))",
-        re.I,
-    )
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-    for m in patron.finditer(texto):
-        titulo = _bop._norm(m.group(1))
-        registro = re.search(
-            r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)",
-            texto[m.start():m.end() + 100],
-            re.I,
-        )
-        if not registro:
+    for mr in REGISTRO_RE.finditer(texto):
+        numero = mr.group(1)
+        if numero in vistos:
             continue
-        numero = registro.group(1)
+        inicio_busqueda = max(0, mr.start() - 8000)
+        bloque = texto[inicio_busqueda:mr.start()]
+        posiciones = [m.start() for m in re.finditer(r"\bAnunci\b", bloque, re.I)]
+        if not posiciones:
+            continue
+        inicio = inicio_busqueda + posiciones[-1]
+        titulo = _bop._norm(texto[inicio:mr.start()])
         n = _bop._sin(titulo)
         if "diputacion provincial de valencia" not in n:
             continue
         if not _bop._incluido(titulo):
             continue
-        if numero in vistos:
-            continue
         vistos.add(numero)
-        contexto = texto[m.start():m.end() + 150]
+        contexto = texto[inicio:mr.end() + 150]
         fm = re.search(r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})", contexto, re.I)
         fecha = _bop._fecha(fm.group(1)) if fm else None
         resultados.append({
@@ -54,8 +50,6 @@ def _extraer_anuncios_por_texto(html: str) -> list[dict[str, Any]]:
 
 
 def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
-    # El BOP devuelve el resultado de búsqueda en HTML/CDATA con una estructura
-    # PrimeFaces cambiante. La extracción por texto es la vía estable.
     return _extraer_anuncios_por_texto(html)
 
 
@@ -165,7 +159,21 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         forms = soup.find_all("form")
         _, html, error = _obtener_pagina(client, fecha_obj)
         texto = _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True))
-        matches = list(re.finditer(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", texto, re.I))
+        matches = list(REGISTRO_RE.finditer(texto))
+        bloques = []
+        for mr in matches:
+            inicio_busqueda = max(0, mr.start() - 8000)
+            bloque = texto[inicio_busqueda:mr.start()]
+            posiciones = [m.start() for m in re.finditer(r"\bAnunci\b", bloque, re.I)]
+            inicio = inicio_busqueda + posiciones[-1] if posiciones else None
+            titulo = _bop._norm(texto[inicio:mr.start()]) if inicio is not None else ""
+            n = _bop._sin(titulo)
+            bloques.append({
+                "registro": mr.group(1),
+                "titulo": titulo[:500],
+                "organismo": "diputacion provincial de valencia" in n,
+                "incluido": _bop._incluido(titulo),
+            })
         return {
             "fecha_solicitada": fecha,
             "error": error,
@@ -173,12 +181,14 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
             "get_status": r0.status_code,
             "get_html": len(r0.text),
             "form_ids": [f.get("id") for f in forms],
-            "forms": [{"id": f.get("id"), "action": f.get("action"), "inputs": [i.get("name") for i in f.find_all("input") if i.get("name")][:40]} for f in forms[:10]],
             "post_html": len(html or ""),
             "anuncios_parser": len(_extraer_anuncios_pagina(html or "")),
             "registro_matches": len(matches),
-            "muestra_registros": [texto[max(0, m.start()-500):m.end()+100] for m in matches[:5]],
-            "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
+            "bloques_anunci_registro": len(bloques),
+            "candidatos_organismo": sum(1 for b in bloques if b["organismo"]),
+            "candidatos_incluidos": sum(1 for b in bloques if b["organismo"] and b["incluido"]),
+            "muestra_bloques": [b for b in bloques if b["registro"] in {"2026/10873", "2026/10875", "2026/10878", "2026/10879", "2026/10881"}],
+            "primeros_registros": [m.group(1) for m in matches[:20]],
             "contiene_10873": "2026/10873" in (html or ""),
         }
     r = client.get(_bop.BOP_URL)
