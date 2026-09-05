@@ -4,7 +4,7 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from .bop_valencia import importar_bop_valencia
+from .bop_valencia import diagnosticar_bop, importar_bop_valencia
 from .gva_fix import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -76,6 +76,18 @@ def importar_gva_endpoint(
         return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
+
+
+@app.get("/admin/debug/bop")
+def debug_bop(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        import httpx
+        headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
+        with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
+            return diagnosticar_bop(client)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en diagnóstico BOP: {exc}") from exc
 
 
 @app.post("/admin/import/bop-valencia")
