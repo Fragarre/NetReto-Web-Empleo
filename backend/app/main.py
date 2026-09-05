@@ -4,7 +4,7 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from .bop_valencia import diagnosticar_bop, importar_bop_valencia
+from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .gva_fix import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
