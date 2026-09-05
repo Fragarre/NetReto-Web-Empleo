@@ -33,27 +33,24 @@ def _titulo_desde_contenedor(cont: Any) -> str:
 
 
 def _extraer_anuncios_por_texto(html: str) -> list[dict[str, Any]]:
-    """Fallback robusto: no depende de clases CSS ni de la estructura de enlaces."""
+    """Extrae anuncios a partir de cada número de registro, sin depender de CSS/HTML."""
     texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-    patron = re.compile(
-        r"(Anunci\b.*?)(?=\s+N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\b)",
-        re.I,
-    )
-    for m in patron.finditer(texto):
-        titulo = _bop._norm(m.group(1))
-        bloque = texto[m.start():m.end() + 160]
+
+    registros = list(re.finditer(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", texto, re.I))
+    for i, mr in enumerate(registros):
+        registro = mr.group(1)
+        inicio = max(0, mr.start() - 2500)
+        bloque = texto[inicio:mr.start()]
+        pos_anunci = [m.start() for m in re.finditer(r"\bAnunci\b", bloque, re.I)]
+        if not pos_anunci:
+            continue
+        titulo = _bop._norm(bloque[pos_anunci[-1]:])
         if "diputacion provincial de valencia" not in _bop._sin(titulo):
             continue
         if not _bop._incluido(titulo):
             continue
-        mr = re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", bloque, re.I)
-        if not mr:
-            mr = re.search(r"\b(\d{4}/\d+)\b", bloque)
-        if not mr:
-            continue
-        registro = mr.group(1)
         if registro in vistos:
             continue
         vistos.add(registro)
