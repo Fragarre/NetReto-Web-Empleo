@@ -6,7 +6,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
-from .gva_clean import importar_gva_robusto
+from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
 
@@ -58,6 +58,14 @@ def importar_gva_endpoint(
         return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
+
+@app.post("/admin/cleanup/gva-navegacion")
+def cleanup_gva_navegacion(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return limpiar_gva_navegacion()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en limpieza GVA: {exc}") from exc
 
 @app.get("/admin/debug/bop")
 def debug_bop(x_import_secret: str | None = Header(default=None), fecha: str | None = Query(default=None)) -> dict[str, Any]:
