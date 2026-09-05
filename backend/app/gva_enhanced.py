@@ -4,6 +4,8 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from bs4 import BeautifulSoup
+
 from . import gva_clean as base
 from .database import get_connection
 
@@ -54,10 +56,26 @@ def _extraer_organismo(texto: str) -> str | None:
     return max(candidatos, key=lambda x: x[0])[1] if candidatos else None
 
 
-def _extraer_enlace_organismo(texto: str) -> str | None:
-    datos = texto or ""
-    m = re.search(r'https?://[^\s<>\"]+', datos, re.I)
-    return m.group(0).rstrip(".,;)") if m else None
+def _extraer_enlace_organismo_html(html: str) -> str | None:
+    """Extrae el href del enlace 'Enlace a organismo' de la ficha oficial."""
+    if not html:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    for nodo in soup.find_all(string=re.compile(r"Enlace a organismo", re.I)):
+        actual = nodo.parent
+        if actual is None:
+            continue
+        candidatos = []
+        if actual.name == "a":
+            candidatos.append(actual)
+        candidatos.extend(actual.find_all("a", href=True))
+        if actual.parent is not None:
+            candidatos.extend(actual.parent.find_all("a", href=True))
+        for enlace in candidatos:
+            href = (enlace.get("href") or "").strip()
+            if href and not href.startswith("#"):
+                return href
+    return None
 
 
 def _resolver_organismo(titulo: str, organismo: str | None) -> tuple[int | None, str]:
@@ -91,9 +109,9 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     proceso = _BASE_PARSEAR_DETALLE(url, html, id_emp)
     texto = proceso["publicacion"]["contenido_texto"]
     titulo = proceso["denominacion"]
-    organismo = _extraer_organismo(texto)
-    organismo_enlace = (proceso.get("datos_json") or {}).get("organismo_url") or (proceso.get("datos_json") or {}).get("url_organismo")
-    organismo_evidencia = organismo_enlace or organismo
+    organismo_texto = _extraer_organismo(texto)
+    organismo_enlace = _extraer_enlace_organismo_html(html)
+    organismo_evidencia = organismo_enlace or organismo_texto
     organismo_id, motivo = _resolver_organismo(titulo, organismo_evidencia)
     proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
     proceso["turno"] = _turno(f"{titulo} {texto}")
