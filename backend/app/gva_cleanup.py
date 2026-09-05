@@ -7,10 +7,15 @@ from .database import get_connection
 
 GVA_ORGANISMO_ID = 1
 FECHA_CORTE = date(2026, 1, 1)
+EXTERNOS_GVA_DETECTADOS = (
+    "97686", "103850", "103891", "104127", "104146", "104318",
+    "105609", "105610", "113676", "113692", "113753", "113762",
+    "113764", "113765", "113766", "113767",
+)
 
 
 def limpiar_gva_stale() -> dict[str, Any]:
-    """Elimina del catálogo GVA procesos antiguos que ya no pertenecen al ámbito.
+    """Elimina del catálogo GVA procesos antiguos o externos ya detectados.
 
     Los procesos con suscripciones activas se conservan y se devuelven como
     bloqueados para evitar pérdida de referencias de usuarios.
@@ -33,7 +38,8 @@ def limpiar_gva_stale() -> dict[str, Any]:
                 WHERE organismo_id = %s
                   AND identificador_estable LIKE 'GVA:%%'
                   AND (
-                      COALESCE(datos_json->>'organismo_motivo', '') = 'organismo_externo'
+                      datos_json->>'id_emp' = ANY(%s)
+                      OR COALESCE(datos_json->>'organismo_motivo', '') = 'organismo_externo'
                       OR LOWER(COALESCE(datos_json->>'organismo_detectado', '')) LIKE '%%justicia%%'
                       OR LOWER(COALESCE(datos_json->>'organismo_detectado', '')) LIKE '%%istecdigital%%'
                       OR LOWER(COALESCE(datos_json->>'organismo_detectado', '')) LIKE '%%iislafe%%'
@@ -44,7 +50,7 @@ def limpiar_gva_stale() -> dict[str, Any]:
                   )
                 ORDER BY id
                 """,
-                (GVA_ORGANISMO_ID, FECHA_CORTE),
+                (GVA_ORGANISMO_ID, list(EXTERNOS_GVA_DETECTADOS), FECHA_CORTE),
             )
             candidatos = cursor.fetchall()
             resultado["candidatos"] = len(candidatos)
@@ -62,20 +68,13 @@ def limpiar_gva_stale() -> dict[str, Any]:
                     )
                     continue
 
-                motivo = "organismo_externo"
-                if not (
-                    (datos or {}).get("organismo_motivo") == "organismo_externo"
-                    or "justicia" in str((datos or {}).get("organismo_detectado", "")).lower()
-                    or "istecdigital" in str((datos or {}).get("organismo_detectado", "")).lower()
-                    or "iislafe" in str((datos or {}).get("organismo_detectado", "")).lower()
-                ):
-                    motivo = "fuera_ambito"
+                id_emp = str((datos or {}).get("id_emp", ""))
+                motivo = "organismo_externo" if id_emp in EXTERNOS_GVA_DETECTADOS else "fuera_ambito"
+                if (datos or {}).get("organismo_motivo") == "organismo_externo":
+                    motivo = "organismo_externo"
 
                 cursor.execute(
-                    """
-                    DELETE FROM notificaciones
-                    WHERE cambio_id IN (SELECT id FROM cambios WHERE proceso_id = %s)
-                    """,
+                    "DELETE FROM notificaciones WHERE cambio_id IN (SELECT id FROM cambios WHERE proceso_id = %s)",
                     (proceso_id,),
                 )
                 cursor.execute("DELETE FROM cambios WHERE proceso_id = %s", (proceso_id,))
