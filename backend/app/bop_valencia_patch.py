@@ -39,7 +39,7 @@ def _extraer_anuncios_por_texto(html: str) -> list[dict[str, Any]]:
     vistos: set[str] = set()
 
     registros = list(re.finditer(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", texto, re.I))
-    for i, mr in enumerate(registros):
+    for mr in registros:
         registro = mr.group(1)
         inicio = max(0, mr.start() - 2500)
         bloque = texto[inicio:mr.start()]
@@ -195,6 +195,12 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
         soup = BeautifulSoup(r0.text, "html.parser")
         forms = soup.find_all("form")
         _, html, error = _obtener_pagina(client, fecha_obj)
+        texto = _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True))
+        matches = list(re.finditer(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", texto, re.I))
+        muestra = []
+        for m in matches[:5]:
+            inicio = max(0, m.start() - 500)
+            muestra.append(texto[inicio:m.end() + 100])
         return {
             "fecha_solicitada": fecha,
             "error": error,
@@ -205,15 +211,18 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
             "forms": [{"id": f.get("id"), "action": f.get("action"), "inputs": [i.get("name") for i in f.find_all("input") if i.get("name")][:40]} for f in forms[:10]],
             "post_html": len(html or ""),
             "anuncios_parser": len(_extraer_anuncios_pagina(html or "")),
-            "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)))[:20],
+            "registro_matches": len(matches),
+            "muestra_registros": muestra,
+            "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
             "contiene_10873": "2026/10873" in (html or ""),
         }
     r = client.get(_bop.BOP_URL)
     r.raise_for_status()
+    texto = _bop._norm(BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True))
     return {
         "url": str(r.url),
         "status": r.status_code,
         "ancho_html": len(r.text),
         "anuncios_parser": len(_extraer_anuncios_pagina(r.text)),
-        "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)))[:20],
+        "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
     }
