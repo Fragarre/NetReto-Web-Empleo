@@ -78,31 +78,58 @@ def _extraer_enlace_organismo_html(html: str) -> str | None:
     return None
 
 
-def _resolver_organismo(titulo: str, organismo: str | None) -> tuple[int | None, str]:
-    raw = (organismo or "").strip()
-    evidencia = base._sin_acentos(f"{titulo} {raw}")
+def _es_externo_por_texto(titulo: str, organismo_texto: str | None) -> bool:
+    evidencia = base._sin_acentos(f"{titulo} {organismo_texto or ''}")
     externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia", "istecdigital", "iislafe", "instituto de investigacion sanitaria la fe")
-    if any(marca in evidencia for marca in externos):
+    return any(marca in evidencia for marca in externos)
+
+
+def _es_generalitat_texto(organismo_texto: str | None) -> bool:
+    normal = base._sin_acentos(organismo_texto or "")
+    return bool(normal) and (
+        normal.startswith("conselleria ")
+        or "labora" in normal
+        or "agencia valenciana" in normal
+        or "institut valencia" in normal
+        or "instituto valenciano" in normal
+        or "turisme comunitat valenciana" in normal
+        or "generalitat valenciana" in normal
+    )
+
+
+def _host(url: str | None) -> str:
+    try:
+        candidata = (url or "").strip()
+        if not candidata:
+            return ""
+        if "://" not in candidata:
+            candidata = f"https://{candidata}"
+        return urlparse(candidata).netloc.lower().split(":", 1)[0].rstrip(".")
+    except Exception:
+        return ""
+
+
+def _resolver_organismo(titulo: str, organismo_texto: str | None, organismo_enlace: str | None) -> tuple[int | None, str]:
+    # La evidencia textual de la ficha tiene prioridad sobre el enlace cuando
+    # este apunta a un portal transversal de la Generalitat (p.ej. cjusticia).
+    # Primero descartamos procesos que son materialmente estatales/externos.
+    if _es_externo_por_texto(titulo, organismo_texto):
         return None, "organismo_externo"
 
-    host = ""
-    try:
-        candidata = raw if "://" in raw else f"https://{raw}"
-        host = urlparse(candidata).netloc.lower().split(":", 1)[0].rstrip(".")
-    except Exception:
-        host = ""
+    if _es_generalitat_texto(organismo_texto):
+        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
 
+    host = _host(organismo_enlace)
     if host == "cjusticia.gva.es" or host.endswith(".istecdigital.es") or host.endswith(".iislafe.es"):
         return None, "organismo_externo"
     if host == "gva.es" or host.endswith(".gva.es"):
         return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
 
-    org_normal = base._sin_acentos(raw)
-    if not org_normal:
-        return None, "organismo_no_identificado"
-    if org_normal.startswith("conselleria ") or "labora" in org_normal or "agencia valenciana" in org_normal or "institut valencia" in org_normal or "instituto valenciano" in org_normal or "turisme comunitat valenciana" in org_normal or "generalitat valenciana" in org_normal:
-        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
-    return None, "organismo_no_pertenece_a_generalitat"
+    if organismo_texto:
+        return None, "organismo_no_pertenece_a_generalitat"
+    if organismo_enlace:
+        return None, "organismo_externo"
+    return None, "organismo_no_identificado"
 
 
 def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
@@ -111,14 +138,17 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     titulo = proceso["denominacion"]
     organismo_texto = _extraer_organismo(texto)
     organismo_enlace = _extraer_enlace_organismo_html(html)
-    organismo_evidencia = organismo_enlace or organismo_texto
-    organismo_id, motivo = _resolver_organismo(titulo, organismo_evidencia)
+    organismo_id, motivo = _resolver_organismo(titulo, organismo_texto, organismo_enlace)
     proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
-    # La denominación oficial tiene prioridad absoluta para el turno.
-    # El resto del texto puede mencionar otros turnos en referencias normativas.
     proceso["turno"] = _turno(titulo) or _turno(texto)
     proceso["organismo_id"] = organismo_id
-    proceso["datos_json"] = {**(proceso.get("datos_json") or {}), "organismo_detectado": organismo_evidencia, "organismo_id_resuelto": organismo_id, "organismo_motivo": motivo}
+    proceso["datos_json"] = {
+        **(proceso.get("datos_json") or {}),
+        "organismo_detectado": organismo_texto,
+        "organismo_enlace": organismo_enlace,
+        "organismo_id_resuelto": organismo_id,
+        "organismo_motivo": motivo,
+    }
     return proceso
 
 
