@@ -13,7 +13,7 @@ from uuid import UUID
 
 from psycopg.rows import dict_row
 
-from .database import get_connection
+from app.database import get_connection
 
 ESTADOS_CON_ACCESO = {"active", "trialing", "past_due"}
 
