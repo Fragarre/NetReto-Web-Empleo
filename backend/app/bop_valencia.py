@@ -24,6 +24,19 @@ FUENTE_ID = 2
 INCLUIDOS = ("convocatoria", "proceso selectivo", "selección", "seleccion", "oposición", "oposicion", "bolsa de trabajo", "bolsa de empleo")
 EXCLUIDOS = ("provisión del puesto", "provision del puesto", "provisión de puestos", "provision de puestos", "provisión del lugar", "provision del lloc", "provisió del lloc", "libre designación", "libre designacion", "lliure designació", "lliure designacio", "nomenament", "nombramiento")
 
+NUMEROS = {
+    "una": 1, "uno": 1, "un": 1,
+    "dos": 2, "tres": 3, "cuatro": 4, "quatre": 4,
+    "cinco": 5, "cinc": 5, "seis": 6, "sis": 6,
+    "siete": 7, "set": 7, "ocho": 8, "vuit": 8,
+    "nueve": 9, "nou": 9, "diez": 10, "deu": 10,
+    "once": 11, "onze": 11, "doce": 12, "dotze": 12,
+    "trece": 13, "tretze": 13, "catorce": 14, "catorze": 14,
+    "quince": 15, "quinze": 15, "dieciseis": 16, "setze": 16,
+    "dieciséis": 16, "diecisiete": 17, "dieciocho": 18, "diecinueve": 19,
+    "veinte": 20, "vint": 20,
+}
+
 
 def _norm(s: str) -> str:
     return " ".join(s.replace("\xa0", " ").split())
@@ -58,17 +71,45 @@ def _anio_convocatoria(s: str) -> int | None:
 
 
 def _plazas(s: str) -> int | None:
-    patrones = (r"(?:selecci[oó]n|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?)", r"(?:selecci[oó]n|seleccio)\s+de\s+una\s+(?:plaza|plaça|place)", r"convocatoria\s+de\s+(\d+)\s+(?:plazas?|places?)", r"selecci[oó]n\s+de\s+(\d+)\s+(?:plazas?|places?)")
+    n = _sin(s)
+    patrones = (
+        r"(?:seleccion|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?)",
+        r"(?:seleccion|seleccio)\s+de\s+(una|uno|un|dos|tres|cuatro|quatre|cinco|cinc|seis|sis|siete|set|ocho|vuit|nueve|nou|diez|deu|once|onze|doce|dotze|trece|tretze|catorce|catorze|quince|quinze|dieciseis|dieciseis|diecisiete|dieciocho|diecinueve|veinte|vint)\s+(?:plazas?|places?)",
+        r"convocatoria\s+de\s+(\d+)\s+(?:plazas?|places?)",
+        r"convocatoria\s+de\s+(una|uno|un|dos|tres|cuatro|quatre|cinco|cinc|seis|sis|siete|set|ocho|vuit|nueve|nou|diez|deu)\s+(?:plazas?|places?)",
+        r"seleccion\s+de\s+(\d+)\s+(?:plazas?|places?)",
+    )
     for p in patrones:
-        m = re.search(p, s, re.I)
+        m = re.search(p, n, re.I)
         if m:
-            return int(m.group(1)) if m.lastindex else 1
+            valor = m.group(1).lower()
+            if valor.isdigit():
+                return int(valor)
+            return NUMEROS.get(valor)
     return None
 
 
-def _grupo(s: str) -> str | None:
-    m = re.search(r"subgrupo\s+([A-Z]\d(?:/\d)?)", s, re.I)
-    return m.group(1).upper() if m else None
+def _grupo_subgrupo(s: str) -> tuple[str | None, str | None]:
+    n = _sin(s)
+    m = re.search(r"(?:subgrupo|grupo)\s+([a-z]\d(?:/\d)?)", n, re.I)
+    if not m:
+        return None, None
+    subgrupo = m.group(1).upper()
+    grupo = subgrupo.split("/")[0][0]
+    return grupo, subgrupo
+
+
+def _fecha_convocatoria(s: str) -> date | None:
+    n = _sin(s)
+    patrones = (
+        r"convocatoria.{0,120}?(?:de fecha|fecha de|dat(?:a|a) de)\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})",
+        r"(?:fecha de convocatoria|data de la convocatoria)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})",
+    )
+    for p in patrones:
+        m = re.search(p, n, re.I | re.S)
+        if m:
+            return _fecha(m.group(1))
+    return None
 
 
 def _turno(s: str) -> str | None:
@@ -236,22 +277,26 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
                     titulo = anuncio["titulo"]
                     registro = anuncio["registro"]
                     texto = _obtener_texto(client, anuncio["url"])
+                    contenido = titulo + " " + texto
                     estable = _identificador_estable(titulo, texto)
-                    anio = _anio_convocatoria(titulo + " " + texto)
+                    anio = _anio_convocatoria(contenido)
+                    fecha_convocatoria = _fecha_convocatoria(contenido)
+                    grupo, subgrupo = _grupo_subgrupo(contenido)
+                    plazas = _plazas(contenido)
                     ultima = datetime.combine(fecha, datetime.min.time(), tzinfo=timezone.utc) if fecha else None
-                    valores = (titulo, _grupo(titulo + " " + texto), _tipo(titulo), _turno(titulo + " " + texto), _plazas(titulo), "EN_SEGUIMIENTO", anio)
-                    cursor.execute("SELECT id, denominacion, grupo, tipo_proceso, turno, plazas, estado, anio_convocatoria FROM procesos WHERE identificador_estable=%s", (estable,))
+                    valores = (titulo, grupo, subgrupo, _tipo(titulo), _turno(contenido), plazas, "EN_SEGUIMIENTO", anio, fecha_convocatoria)
+                    cursor.execute("SELECT id, denominacion, grupo, subgrupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_convocatoria FROM procesos WHERE identificador_estable=%s", (estable,))
                     existente = cursor.fetchone()
-                    campos = ("denominacion", "grupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria")
+                    campos = ("denominacion", "grupo", "subgrupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_convocatoria")
                     if existente:
                         proceso_id = existente[0]
                         for i, campo in enumerate(campos, 1):
                             if existente[i] != valores[i - 1]:
                                 cursor.execute("INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen) VALUES (%s,%s,%s,%s,%s,%s)", (proceso_id, "ACTUALIZACION", campo, str(existente[i]) if existente[i] is not None else None, str(valores[i - 1]) if valores[i - 1] is not None else None, f"Cambio en {campo}: {existente[i]!r} -> {valores[i - 1]!r}"))
                                 stats["cambios"] += 1
-                        cursor.execute("UPDATE procesos SET denominacion=%s,grupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,datos_json=%s,updated_at=NOW() WHERE id=%s", (*valores, fecha, ultima, FUENTE_ID, Jsonb({"registro": registro, "url": anuncio["url"]}), proceso_id))
+                        cursor.execute("UPDATE procesos SET denominacion=%s,grupo=%s,subgrupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,datos_json=%s,updated_at=NOW() WHERE id=%s", (*valores[:8], valores[8], ultima, FUENTE_ID, Jsonb({"registro": registro, "url": anuncio["url"]}), proceso_id))
                     else:
-                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (ORGANISMO_ID, registro, estable, *valores, fecha, ultima, FUENTE_ID, Jsonb({"registro": registro, "url": anuncio["url"]})))
+                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (ORGANISMO_ID, registro, estable, titulo, grupo, subgrupo, _tipo(titulo), _turno(contenido), plazas, "EN_SEGUIMIENTO", anio, fecha_convocatoria, ultima, FUENTE_ID, Jsonb({"registro": registro, "url": anuncio["url"]})))
                         proceso_id = cursor.fetchone()[0]
                         stats["procesos"] += 1
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
