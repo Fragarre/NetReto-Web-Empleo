@@ -22,7 +22,7 @@ ORGANISMO_ID = 2
 FUENTE_ID = 2
 
 INCLUIDOS = ("convocatoria", "proceso selectivo", "selección", "seleccion", "oposición", "oposicion", "bolsa de trabajo", "bolsa de empleo")
-EXCLUIDOS = ("provisión del puesto", "provision del puesto", "provisión de puestos", "provision de puestos", "provisión del lugar", "provision del lloc", "libre designación", "libre designacion")
+EXCLUIDOS = ("provisión del puesto", "provision del puesto", "provisión de puestos", "provision de puestos", "provisión del lugar", "provision del lloc", "provisió del lloc", "libre designación", "libre designacion", "lliure designació", "lliure designacio", "nomenament", "nombramiento")
 
 
 def _norm(s: str) -> str:
@@ -58,12 +58,7 @@ def _anio_convocatoria(s: str) -> int | None:
 
 
 def _plazas(s: str) -> int | None:
-    patrones = (
-        r"(?:selecci[oó]n|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?)",
-        r"(?:selecci[oó]n|seleccio)\s+de\s+una\s+(?:plaza|plaça|place)",
-        r"convocatoria\s+de\s+(\d+)\s+(?:plazas?|places?)",
-        r"selecci[oó]n\s+de\s+(\d+)\s+(?:plazas?|places?)",
-    )
+    patrones = (r"(?:selecci[oó]n|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?)", r"(?:selecci[oó]n|seleccio)\s+de\s+una\s+(?:plaza|plaça|place)", r"convocatoria\s+de\s+(\d+)\s+(?:plazas?|places?)", r"selecci[oó]n\s+de\s+(\d+)\s+(?:plazas?|places?)")
     for p in patrones:
         m = re.search(p, s, re.I)
         if m:
@@ -127,13 +122,7 @@ def _diagnostico_candidato(a: Any) -> dict[str, Any]:
         if cont is None:
             break
         texto = _norm(cont.get_text(" ", strip=True))
-        chain.append({
-            "nivel": level,
-            "tag": getattr(cont, "name", None),
-            "id": cont.get("id") if hasattr(cont, "get") else None,
-            "class": cont.get("class") if hasattr(cont, "get") else None,
-            "texto": texto[:1000],
-        })
+        chain.append({"nivel": level, "tag": getattr(cont, "name", None), "id": cont.get("id") if hasattr(cont, "get") else None, "class": cont.get("class") if hasattr(cont, "get") else None, "texto": texto[:1000]})
         if re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I):
             break
     return {"titulo": _norm(a.get_text(" ", strip=True)), "id": a.get("id"), "class": a.get("class"), "onclick": a.get("onclick"), "chain": chain}
@@ -154,15 +143,7 @@ def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
         candidatos.append(_diagnostico_candidato(a))
         if len(candidatos) >= 20:
             break
-    return {
-        "url": str(r.url),
-        "status": r.status_code,
-        "ancho_html": len(r.text),
-        "total_anchors": len(anchors),
-        "commandlinks": len(commandlinks),
-        "anuncios_detectados": len(candidatos),
-        "candidatos": candidatos,
-    }
+    return {"url": str(r.url), "status": r.status_code, "ancho_html": len(r.text), "total_anchors": len(anchors), "commandlinks": len(commandlinks), "anuncios_detectados": len(candidatos), "candidatos": candidatos}
 
 
 def _pagina_bop_url(fecha: date) -> str:
@@ -186,12 +167,7 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
         if not registro or registro in vistos:
             continue
         vistos.add(registro)
-        resultados.append({
-            "titulo": titulo,
-            "url": f"{DOWNLOAD_URL}?anuncioCSV=BOPV-{registro}&lang=es",
-            "registro": registro,
-            "fecha_publicacion": fecha,
-        })
+        resultados.append({"titulo": titulo, "url": f"{DOWNLOAD_URL}?anuncioNumReg={quote(registro)}&lang=es", "registro": registro, "fecha_publicacion": fecha})
     return resultados
 
 
@@ -209,7 +185,6 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
         r = client.get(BOP_URL)
         r.raise_for_status()
         return _extraer_anuncios_pagina(r.text)
-
     hoy = date.today()
     desde = hoy - timedelta(days=max(0, dias - 1))
     fechas = [desde + timedelta(days=i) for i in range((hoy - desde).days + 1)]
@@ -282,8 +257,23 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     cursor.execute("SELECT 1 FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
                     if cursor.fetchone() is None:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]})))
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]}))
                         stats["publicaciones"] += 1
                     stats["anuncios"].append({"registro": registro, "titulo": titulo, "fecha_publicacion": fecha.isoformat() if fecha else None, "proceso_id": proceso_id, "identificador_estable": estable})
             connection.commit()
     return stats
+
+
+def limpiar_anuncios_no_empleo() -> dict[str, int]:
+    """Elimina únicamente los tres registros de prueba que eran provisión/nombramiento."""
+    registros = ("2026/10924", "2026/10931", "2026/11054")
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM procesos WHERE organismo_id=%s AND codigo_externo = ANY(%s)", (ORGANISMO_ID, list(registros)))
+            ids = [row[0] for row in cursor.fetchall()]
+            if ids:
+                cursor.execute("DELETE FROM cambios WHERE proceso_id = ANY(%s)", (ids,))
+                cursor.execute("DELETE FROM publicaciones WHERE proceso_id = ANY(%s)", (ids,))
+                cursor.execute("DELETE FROM procesos WHERE id = ANY(%s)", (ids,))
+            connection.commit()
+    return {"procesos_eliminados": len(ids)}
