@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-
-from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 from . import gva_clean as base
 from .database import get_connection
@@ -47,15 +46,7 @@ def _extraer_organismo(texto: str) -> str | None:
     previo = normal[:m_etapa.start()]
     m_atras = list(re.finditer(r"\bAtrás\b", previo, re.I))
     bloque = previo[m_atras[-1].end():] if m_atras else previo[-2500:]
-    patrones = (
-        r"Conselleria\s+[^:]{1,180}",
-        r"Labora\s+[^:]{1,180}",
-        r"Ag[eè]ncia\s+[^:]{1,180}",
-        r"Institut\s+[^:]{1,180}",
-        r"Instituto\s+[^:]{1,180}",
-        r"Turisme Comunitat Valenciana",
-        r"Generalitat Valenciana",
-    )
+    patrones = (r"Conselleria\s+[^:]{1,180}", r"Labora\s+[^:]{1,180}", r"Ag[eè]ncia\s+[^:]{1,180}", r"Institut\s+[^:]{1,180}", r"Instituto\s+[^:]{1,180}", r"Turisme Comunitat Valenciana", r"Generalitat Valenciana")
     candidatos = []
     for patron in patrones:
         for m in re.finditer(patron, bloque, re.I):
@@ -63,38 +54,31 @@ def _extraer_organismo(texto: str) -> str | None:
     return max(candidatos, key=lambda x: x[0])[1] if candidatos else None
 
 
-def _extraer_organismo_html(html: str) -> str | None:
-    """Extrae el organismo desde el enlace 'Enllaç a organisme'.
-
-    Es la evidencia más fiable cuando la página no muestra el nombre del
-    organismo como texto independiente antes de 'Etapa actual'.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    for etiqueta in soup.find_all(string=re.compile(r"Enllaç a organisme|Enlace a organismo", re.I)):
-        contenedor = etiqueta.parent
-        if contenedor is None:
-            continue
-        bloque = contenedor.parent or contenedor
-        enlace = bloque.find_next("a", href=True)
-        if enlace:
-            valor = base._normalizar(enlace.get_text(" ", strip=True))
-            if valor and not re.fullmatch(r"https?://\S+", valor):
-                return valor
-            href = enlace.get("href", "")
-            if href:
-                return href
-    return None
+def _extraer_enlace_organismo(texto: str) -> str | None:
+    # En el texto plano generado por BeautifulSoup, el href no se conserva.
+    # Esta función queda como punto de extensión; la resolución principal usa
+    # las URLs que el parser base pueda conservar en datos_json.
+    datos = texto or ""
+    m = re.search(r"https?://[^\s<>"]+", datos, re.I)
+    return m.group(0).rstrip(".,;)") if m else None
 
 
 def _resolver_organismo(titulo: str, organismo: str | None) -> tuple[int | None, str]:
     evidencia = base._sin_acentos(f"{titulo} {organismo or ''}")
-    externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia", "istec", "institut superior tecnologic", "universitat", "diputacion", "ayuntamiento")
+    externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia", "istecdigital", "iislafe", "instituto de investigacion sanitaria la fe")
     if any(marca in evidencia for marca in externos):
         return None, "organismo_externo"
     org_normal = base._sin_acentos(organismo or "")
     if not org_normal:
         return None, "organismo_no_identificado"
-    if ("generalitat valenciana" in org_normal or org_normal.startswith("conselleria ") or "labora" in org_normal or "agencia valenciana" in org_normal or "institut valencia" in org_normal or "instituto valenciano" in org_normal or "turisme comunitat valenciana" in org_normal):
+    # El enlace oficial es la evidencia más estable disponible en estas fichas.
+    # Los subdominios/portales GVA se consideran Generalitat salvo excepciones
+    # conocidas que publican procesos de organismos externos.
+    if "cjusticia.gva.es" in org_normal or "istecdigital.es" in org_normal or "iislafe.es" in org_normal:
+        return None, "organismo_externo"
+    if ".gva.es" in org_normal or "generalitat valenciana" in org_normal:
+        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
+    if org_normal.startswith("conselleria ") or "labora" in org_normal or "agencia valenciana" in org_normal or "institut valencia" in org_normal or "instituto valenciano" in org_normal or "turisme comunitat valenciana" in org_normal:
         return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
     return None, "organismo_no_pertenece_a_generalitat"
 
@@ -103,12 +87,15 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     proceso = _BASE_PARSEAR_DETALLE(url, html, id_emp)
     texto = proceso["publicacion"]["contenido_texto"]
     titulo = proceso["denominacion"]
-    organismo = _extraer_organismo_html(html) or _extraer_organismo(texto)
-    organismo_id, motivo = _resolver_organismo(titulo, organismo)
+    organismo = _extraer_organismo(texto)
+    # El parser base puede haber conservado el enlace del organismo en datos_json.
+    organismo_enlace = (proceso.get("datos_json") or {}).get("organismo_url") or (proceso.get("datos_json") or {}).get("url_organismo")
+    organismo_evidencia = organismo_enlace or organismo
+    organismo_id, motivo = _resolver_organismo(titulo, organismo_evidencia)
     proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
     proceso["turno"] = _turno(f"{titulo} {texto}")
     proceso["organismo_id"] = organismo_id
-    proceso["datos_json"] = {**(proceso.get("datos_json") or {}), "organismo_detectado": organismo, "organismo_id_resuelto": organismo_id, "organismo_motivo": motivo}
+    proceso["datos_json"] = {**(proceso.get("datos_json") or {}), "organismo_detectado": organismo_evidencia, "organismo_id_resuelto": organismo_id, "organismo_motivo": motivo}
     return proceso
 
 
