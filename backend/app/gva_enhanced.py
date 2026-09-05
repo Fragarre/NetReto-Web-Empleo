@@ -56,7 +56,7 @@ def _extraer_organismo(texto: str) -> str | None:
 
 def _extraer_enlace_organismo(texto: str) -> str | None:
     datos = texto or ""
-    m = re.search(r"https?://[^\s<>"]+", datos, re.I)
+    m = re.search(r'https?://[^\s<>\"]+', datos, re.I)
     return m.group(0).rstrip(".,;)") if m else None
 
 
@@ -67,9 +67,6 @@ def _resolver_organismo(titulo: str, organismo: str | None) -> tuple[int | None,
     if any(marca in evidencia for marca in externos):
         return None, "organismo_externo"
 
-    # Si la evidencia es una URL, analizar el host ANTES de normalizarla:
-    # _sin_acentos() elimina puntuación y por tanto no sirve para detectar
-    # correctamente dominios como *.gva.es.
     host = ""
     try:
         candidata = raw if "://" in raw else f"https://{raw}"
