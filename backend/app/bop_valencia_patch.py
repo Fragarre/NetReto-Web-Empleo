@@ -85,7 +85,40 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
 
 def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None, str | None]:
     try:
-        r = client.get(f"{BOP_PORTAL_URL}?fecha={quote(fecha.strftime('%d/%m/%Y'))}")
+        # El BOP usa JSF/PrimeFaces: el parámetro ?fecha=... del GET se ignora.
+        # Primero obtenemos la vista y su ViewState; después ejecutamos el botón
+        # buscarBtn del formulario j_idt132 mediante POST normal.
+        r0 = client.get(BOP_PORTAL_URL)
+        r0.raise_for_status()
+        soup = BeautifulSoup(r0.text, "html.parser")
+        form = soup.find("form", id="j_idt132")
+        if form is None:
+            return fecha, None, "No se encontró el formulario JSF j_idt132"
+
+        data: dict[str, str] = {}
+        for element in form.find_all(["input", "button"]):
+            name = element.get("name")
+            if not name:
+                continue
+            typ = (element.get("type") or "").lower()
+            if element.name == "input" and typ in {"submit", "button", "image", "file"}:
+                continue
+            value = element.get("value")
+            if value is not None:
+                data[name] = value
+
+        fecha_txt = fecha.strftime("%d/%m/%Y")
+        data["filtroCalendarioIni_input"] = fecha_txt
+        data["filtroCalendarioFin_input"] = fecha_txt
+        data["buscarBtn"] = "buscarBtn"
+
+        action = form.get("action") or "/bop/xhtml/portal.xhtml"
+        if action.startswith("/"):
+            url = str(r0.url).split("/bop/", 1)[0] + action
+        else:
+            url = str(r0.url).rsplit("/", 1)[0] + "/" + action
+
+        r = client.post(url, data=data, headers={"Referer": str(r0.url)})
         r.raise_for_status()
         return fecha, r.text, None
     except Exception as exc:
