@@ -7,6 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
+from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
 
@@ -58,6 +59,22 @@ def importar_gva_endpoint(
         return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
+
+@app.post("/admin/cleanup/gva-stale")
+def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return limpiar_gva_stale()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en limpieza GVA: {exc}") from exc
+
+@app.post("/admin/cleanup/gva-turnos")
+def cleanup_gva_turnos(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return corregir_turnos_gva()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en corrección de turnos GVA: {exc}") from exc
 
 @app.post("/admin/cleanup/gva-navegacion")
 def cleanup_gva_navegacion(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
