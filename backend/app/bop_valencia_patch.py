@@ -60,9 +60,10 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
 
 
 def _ajax_html(response_text: str) -> str:
+    # Render no debe depender de un parser XML (lxml).
     if "<partial-response" not in response_text:
         return response_text
-    soup = BeautifulSoup(response_text, "xml")
+    soup = BeautifulSoup(response_text, "html.parser")
     return "\n".join(u.decode_contents() for u in soup.find_all("update"))
 
 
@@ -74,7 +75,6 @@ def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None
         forms = soup.find_all("form")
         form = soup.find("form", id="j_idt132")
         if form is None:
-            # El ID JSF puede cambiar. Buscar el formulario que contiene los filtros de fecha.
             for candidato in forms:
                 nombres = {i.get("name") for i in candidato.find_all("input") if i.get("name")}
                 if "filtroCalendarioIni_input" in nombres and "filtroCalendarioFin_input" in nombres:
