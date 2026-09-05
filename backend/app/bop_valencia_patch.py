@@ -33,33 +33,60 @@ def _titulo_desde_contenedor(cont: Any) -> str:
 
 
 def _extraer_anuncios_por_texto(html: str) -> list[dict[str, Any]]:
-    """Extrae anuncios a partir de cada número de registro, sin depender de CSS/HTML."""
+    """Extrae anuncios desde el texto visible del resultado del BOP, sin depender del HTML."""
     texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
 
-    registros = list(re.finditer(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", texto, re.I))
+    # Cada anuncio tiene la forma: Anunci ... Núm. registre: YYYY/NNNNN ...
+    # Capturamos cada pareja directamente, limitando el título al bloque anterior.
+    patron = re.compile(
+        r"(?P<titulo>Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(?P<registro>\d{4}/\d+))",
+        re.I,
+    )
+    registros = list(re.finditer(
+        r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)",
+        texto, re.I,
+    ))
+
     for mr in registros:
         registro = mr.group(1)
-        inicio = max(0, mr.start() - 2500)
-        bloque = texto[inicio:mr.start()]
-        pos_anunci = [m.start() for m in re.finditer(r"\bAnunci\b", bloque, re.I)]
-        if not pos_anunci:
+        if registro in vistos:
             continue
-        titulo = _bop._norm(bloque[pos_anunci[-1]:])
-        if "diputacion provincial de valencia" not in _bop._sin(titulo):
+
+        # Buscar el último "Anunci" anterior al registro dentro de un margen amplio.
+        inicio = max(0, mr.start() - 5000)
+        bloque = texto[inicio:mr.start()]
+        anuncios = list(re.finditer(r"Anunci\b", bloque, re.I))
+        if not anuncios:
+            continue
+        titulo = _bop._norm(bloque[anuncios[-1].start():])
+
+        # El encabezado del resultado identifica la sección administrativa.
+        # Admitimos tanto castellano como la forma valenciana del organismo.
+        organismo = _bop._sin(titulo)
+        if "diputacion provincial de valencia" not in organismo:
             continue
         if not _bop._incluido(titulo):
             continue
-        if registro in vistos:
-            continue
+
+        # La fecha está inmediatamente después del número de registro.
+        posterior = texto[mr.end(): mr.end() + 250]
+        fm = re.search(
+            r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})",
+            posterior,
+            re.I,
+        )
+        fecha = _bop._fecha(fm.group(1)) if fm else None
+
         vistos.add(registro)
         resultados.append({
             "titulo": titulo,
             "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es",
             "registro": registro,
-            "fecha_publicacion": None,
+            "fecha_publicacion": fecha,
         })
+
     return resultados
 
 
