@@ -15,69 +15,47 @@ BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
 
 
 def _contenedor_anuncio(a: Any) -> Any | None:
-    """Busca el bloque del anuncio a partir del enlace, usando el registro como ancla."""
     cont = a
     for _ in range(12):
         cont = cont.parent
         if cont is None:
             return None
         texto = cont.get_text(" ", strip=True)
-        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(
-            r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I
-        ):
+        if re.search(r"\b\d{4}/\d+\b", texto) and re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I):
             return cont
     return None
 
 
 def _titulo_desde_contenedor(cont: Any) -> str:
     texto = cont.get_text(" ", strip=True)
-    m = re.search(
-        r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro))",
-        texto,
-        re.I,
-    )
-    if m:
-        return _bop._norm(m.group(1))
-    return _bop._norm(texto)
+    m = re.search(r"(Anunci\b.*?)(?=N[uú]m\.\s*(?:de\s*)?(?:registre|registro))", texto, re.I)
+    return _bop._norm(m.group(1)) if m else _bop._norm(texto)
 
 
 def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-
     for a in soup.find_all("a"):
         if "ui-commandlink" not in " ".join(a.get("class", [])):
             continue
-
         cont = _contenedor_anuncio(a)
         if cont is None:
             continue
-
         texto_cont = _bop._norm(cont.get_text(" ", strip=True))
         titulo = _titulo_desde_contenedor(cont)
-
-        # La entidad debe estar en el bloque del anuncio, no necesariamente en el <a>.
         if "diputacion provincial de valencia" not in _bop._sin(texto_cont):
             continue
         if not _bop._incluido(titulo):
             continue
-
         registro, fecha = _bop._extraer_metadatos(a)
         if not registro:
             m = re.search(r"\b(\d{4}/\d+)\b", texto_cont)
             registro = m.group(1) if m else None
         if not registro or registro in vistos:
             continue
-
         vistos.add(registro)
-        resultados.append({
-            "titulo": titulo,
-            "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es",
-            "registro": registro,
-            "fecha_publicacion": fecha,
-        })
-
+        resultados.append({"titulo": titulo, "url": f"{_bop.DOWNLOAD_URL}?anuncioCSV={quote(registro)}&lang=es", "registro": registro, "fecha_publicacion": fecha})
     return resultados
 
 
@@ -86,13 +64,11 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
         r = client.get(_bop.BOP_URL)
         r.raise_for_status()
         return _extraer_anuncios_pagina(r.text)
-
     hoy = date.today()
     desde = hoy - timedelta(days=max(0, dias - 1))
     fechas = [desde + timedelta(days=i) for i in range((hoy - desde).days + 1)]
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(_obtener_pagina, client, fecha) for fecha in fechas]
         for future in as_completed(futures):
@@ -100,11 +76,9 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
             if not html:
                 continue
             for anuncio in _extraer_anuncios_pagina(html):
-                registro = anuncio["registro"]
-                if registro not in vistos:
-                    vistos.add(registro)
+                if anuncio["registro"] not in vistos:
+                    vistos.add(anuncio["registro"])
                     resultados.append(anuncio)
-
     resultados.sort(key=lambda x: (x["fecha_publicacion"] or date.min, x["registro"]))
     return resultados
 
@@ -123,5 +97,25 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
     return _bop.importar_bop_valencia(historico=historico, dias=dias)
 
 
-def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
-    return _bop.diagnosticar_bop(client)
+def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str, Any]:
+    if fecha:
+        d = datetime.strptime(fecha, "%d/%m/%Y").date()
+        r = client.get(f"{BOP_PORTAL_URL}?fecha={quote(fecha)}")
+    else:
+        r = client.get(_bop.BOP_URL)
+        d = None
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+    texto = _bop._norm(soup.get_text(" ", strip=True))
+    commandlinks = [a for a in soup.find_all("a") if "ui-commandlink" in " ".join(a.get("class", []))]
+    return {
+        "url": str(r.url),
+        "fecha_solicitada": fecha,
+        "status": r.status_code,
+        "ancho_html": len(r.text),
+        "contiene_10873": "2026/10873" in r.text,
+        "contiene_texto_diputacion": "Diputació Provincial de València" in texto or "Diputación Provincial de Valencia" in texto,
+        "commandlinks": len(commandlinks),
+        "anuncios_parser": len(_extraer_anuncios_pagina(r.text)),
+        "primeros_registros": re.findall(r"\b2026/\d+\b", texto)[:20],
+    }
