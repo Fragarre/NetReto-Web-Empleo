@@ -60,30 +60,28 @@ def _extraer_anuncios_pagina(html: str) -> list[dict[str, Any]]:
 
 
 def _ajax_html(response_text: str) -> str:
-    """Extrae los fragmentos HTML de una respuesta PrimeFaces partial/ajax."""
     if "<partial-response" not in response_text:
         return response_text
     soup = BeautifulSoup(response_text, "xml")
-    partes = []
-    for update in soup.find_all("update"):
-        contenido = update.string
-        if contenido:
-            partes.append(contenido)
-        else:
-            partes.append(update.decode_contents())
-    return "\n".join(partes)
+    return "\n".join(u.decode_contents() for u in soup.find_all("update"))
 
 
 def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None, str | None]:
     try:
-        # El BOP es JSF/PrimeFaces. El parámetro ?fecha=... del GET se ignora.
-        # Hay que reproducir el PrimeFaces.ab() que ejecuta buscarBtn.
         r0 = client.get(BOP_PORTAL_URL)
         r0.raise_for_status()
         soup = BeautifulSoup(r0.text, "html.parser")
+        forms = soup.find_all("form")
         form = soup.find("form", id="j_idt132")
         if form is None:
-            return fecha, None, "No se encontró el formulario JSF j_idt132"
+            # El ID JSF puede cambiar. Buscar el formulario que contiene los filtros de fecha.
+            for candidato in forms:
+                nombres = {i.get("name") for i in candidato.find_all("input") if i.get("name")}
+                if "filtroCalendarioIni_input" in nombres and "filtroCalendarioFin_input" in nombres:
+                    form = candidato
+                    break
+        if form is None:
+            return fecha, None, f"No se encontró formulario de búsqueda; url={r0.url}; status={r0.status_code}; forms={[f.get('id') for f in forms]}; html={len(r0.text)}"
 
         data: dict[str, str] = {}
         for element in form.find_all("input"):
@@ -95,17 +93,14 @@ def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None
                 continue
             if typ in {"checkbox", "radio"} and not element.has_attr("checked"):
                 continue
-            value = element.get("value")
-            data[name] = value if value is not None else "on"
+            data[name] = element.get("value") or "on"
 
         fecha_txt = fecha.strftime("%d/%m/%Y")
         data["filtroCalendarioIni_input"] = fecha_txt
         data["filtroCalendarioFin_input"] = fecha_txt
-
-        # Parámetros estándar de PrimeFaces.ab({s:"buscarBtn",f:"j_idt132",u:"messages boletines3 edictos"})
         data["javax.faces.partial.ajax"] = "true"
         data["javax.faces.source"] = "buscarBtn"
-        data["javax.faces.partial.execute"] = "buscarBtn"
+        data["javax.faces.partial.execute"] = "buscarBtn filtroCalendarioIni filtroCalendarioFin"
         data["javax.faces.partial.render"] = "messages boletines3 edictos"
         data["buscarBtn"] = "buscarBtn"
 
@@ -114,17 +109,7 @@ def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None
             url = str(r0.url).split("/bop/", 1)[0] + action
         else:
             url = str(r0.url).rsplit("/", 1)[0] + "/" + action
-
-        r = client.post(
-            url,
-            data=data,
-            headers={
-                "Referer": str(r0.url),
-                "Faces-Request": "partial/ajax",
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/xml, text/xml, */*; q=0.01",
-            },
-        )
+        r = client.post(url, data=data, headers={"Referer": str(r0.url), "Faces-Request": "partial/ajax", "X-Requested-With": "XMLHttpRequest", "Accept": "application/xml, text/xml, */*; q=0.01"})
         r.raise_for_status()
         return fecha, _ajax_html(r.text), None
     except Exception as exc:
@@ -141,13 +126,10 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
     fechas = [desde + timedelta(days=i) for i in range((hoy - desde).days + 1)]
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-    # Cada fecha necesita su propia JSF ViewState/sesión; no compartir un Client
-    # entre hilos evita carreras de sesión/ViewState.
     def obtener(fecha: date) -> tuple[date, str | None, str | None]:
         headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
         with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as c:
             return _obtener_pagina(c, fecha)
-
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(obtener, fecha) for fecha in fechas]
         for future in as_completed(futures):
@@ -173,21 +155,12 @@ def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str
             fecha_obj = date.fromisoformat(fecha)
         except ValueError:
             fecha_obj = date.today()
+        r0 = client.get(BOP_PORTAL_URL)
+        r0.raise_for_status()
+        soup = BeautifulSoup(r0.text, "html.parser")
+        forms = soup.find_all("form")
         _, html, error = _obtener_pagina(client, fecha_obj)
-        return {
-            "fecha_solicitada": fecha,
-            "error": error,
-            "ancho_html": len(html or ""),
-            "anuncios_parser": len(_extraer_anuncios_pagina(html or "")),
-            "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)))[:20],
-            "contiene_10873": "2026/10873" in (html or ""),
-        }
+        return {"fecha_solicitada": fecha, "error": error, "get_url": str(r0.url), "get_status": r0.status_code, "get_html": len(r0.text), "form_ids": [f.get("id") for f in forms], "forms": [{"id": f.get("id"), "action": f.get("action"), "inputs": [i.get("name") for i in f.find_all("input") if i.get("name")][:40]} for f in forms[:10]], "post_html": len(html or ""), "anuncios_parser": len(_extraer_anuncios_pagina(html or "")), "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)))[:20], "contiene_10873": "2026/10873" in (html or "")}
     r = client.get(_bop.BOP_URL)
     r.raise_for_status()
-    return {
-        "url": str(r.url),
-        "status": r.status_code,
-        "ancho_html": len(r.text),
-        "anuncios_parser": len(_extraer_anuncios_pagina(r.text)),
-        "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)))[:20],
-    }
+    return {"url": str(r.url), "status": r.status_code, "ancho_html": len(r.text), "anuncios_parser": len(_extraer_anuncios_pagina(r.text)), "primeros_registros": re.findall(r"\b2026/\d+\b", _bop._norm(BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)))[:20]}
