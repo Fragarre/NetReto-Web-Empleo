@@ -97,11 +97,8 @@ def _incluido(titulo: str) -> bool:
 
 
 def _extraer_metadatos(a: Any) -> tuple[str | None, date | None]:
-    # PrimeFaces coloca el enlace y los metadatos en celdas hermanas.
-    # Buscamos primero el contenedor de fila más cercano y, si no contiene
-    # los metadatos, ampliamos progresivamente sin llegar al contenedor global.
     cont = a
-    for _ in range(12):
+    for _ in range(20):
         cont = cont.parent
         if cont is None:
             break
@@ -110,22 +107,43 @@ def _extraer_metadatos(a: Any) -> tuple[str | None, date | None]:
             m = re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d{5})", texto, re.I)
             fm = re.search(r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})", texto, re.I)
             return (m.group(1) if m else None, _fecha(fm.group(1)) if fm else _fecha(texto))
-        # Una fila PrimeFaces suele ser <tr>; no seguimos hasta el panel general.
-        if getattr(cont, "name", None) == "tr":
-            break
-
-    # Fallback: localizar el registro en texto cercano posterior al enlace.
-    parent = a.parent
-    if parent is not None:
-        row = parent.parent
-        if row is not None:
-            texto = _norm(row.get_text(" ", strip=True))
-            m = re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d{5})", texto, re.I)
-            fm = re.search(r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})", texto, re.I)
-            if m:
-                return m.group(1), _fecha(fm.group(1)) if fm else _fecha(texto)
-
     return None, None
+
+
+def _diagnostico_candidato(a: Any) -> dict[str, Any]:
+    chain = []
+    cont = a
+    for level in range(1, 13):
+        cont = cont.parent
+        if cont is None:
+            break
+        texto = _norm(cont.get_text(" ", strip=True))
+        chain.append({
+            "nivel": level,
+            "tag": getattr(cont, "name", None),
+            "id": cont.get("id") if hasattr(cont, "get") else None,
+            "class": cont.get("class") if hasattr(cont, "get") else None,
+            "texto": texto[:1000],
+        })
+        if re.search(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)", texto, re.I):
+            break
+    return {"titulo": _norm(a.get_text(" ", strip=True)), "id": a.get("id"), "chain": chain}
+
+
+def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
+    r = client.get(BOP_URL)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+    candidatos = []
+    for a in soup.find_all("a"):
+        titulo = _norm(a.get_text(" ", strip=True))
+        if not titulo:
+            continue
+        n = _sin(titulo)
+        if "diputacion provincial de valencia" in n and "ui-commandlink" in " ".join(a.get("class", [])):
+            if _incluido(titulo):
+                candidatos.append(_diagnostico_candidato(a))
+    return {"url": BOP_URL, "status": r.status_code, "ancho_html": len(r.text), "candidatos": candidatos[:20]}
 
 
 def descubrir_anuncios(client: httpx.Client) -> list[dict[str, Any]]:
@@ -134,32 +152,20 @@ def descubrir_anuncios(client: httpx.Client) -> list[dict[str, Any]]:
     soup = BeautifulSoup(r.text, "html.parser")
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
-
-    # Los anuncios del BOP son commandlinks PrimeFaces con href="#".
-    # No exigimos href válido: el registro es la identidad documental.
     for a in soup.find_all("a"):
         titulo = _norm(a.get_text(" ", strip=True))
         if not titulo or not _incluido(titulo):
             continue
-
         n = _sin(titulo)
         if "diputacion provincial de valencia" not in n:
             continue
         if "ui-commandlink" not in " ".join(a.get("class", [])):
             continue
-
         registro, fecha = _extraer_metadatos(a)
         if not registro or registro in vistos:
             continue
-
         vistos.add(registro)
-        resultados.append({
-            "titulo": titulo,
-            "url": f"{DOWNLOAD_URL}?anuncioCSV={registro}&lang=es",
-            "registro": registro,
-            "fecha_publicacion": fecha,
-        })
-
+        resultados.append({"titulo": titulo, "url": f"{DOWNLOAD_URL}?anuncioCSV={registro}&lang=es", "registro": registro, "fecha_publicacion": fecha})
     return resultados
 
 
@@ -215,7 +221,7 @@ def importar_bop_valencia() -> dict[str, Any]:
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     cursor.execute("SELECT 1 FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
                     if cursor.fetchone() is None:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]})))
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]})))
                         stats["publicaciones"] += 1
                     stats["anuncios"].append({"registro": registro, "titulo": titulo, "fecha_publicacion": fecha.isoformat() if fecha else None, "proceso_id": proceso_id, "identificador_estable": estable})
             connection.commit()
