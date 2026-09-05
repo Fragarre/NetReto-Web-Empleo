@@ -11,6 +11,7 @@ from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
+from .seguimiento import preparar_notificaciones, listar_notificaciones_pendientes
 
 app = FastAPI(title="NetReto Empleo API", version="0.1.0")
 
@@ -60,6 +61,25 @@ def _validar_import_secret(x_import_secret: str | None) -> None:
     secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
     if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
         raise HTTPException(status_code=403, detail="No autorizado")
+
+@app.post("/admin/seguimiento/preparar-notificaciones")
+def preparar_notificaciones_endpoint(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return preparar_notificaciones()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error preparando notificaciones: {exc}") from exc
+
+@app.get("/admin/seguimiento/notificaciones-pendientes")
+def notificaciones_pendientes_endpoint(
+    x_import_secret: str | None = Header(default=None),
+    limite: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return listar_notificaciones_pendientes(limite=limite)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error listando notificaciones: {exc}") from exc
 
 @app.post("/admin/import/gva")
 def importar_gva_endpoint(
