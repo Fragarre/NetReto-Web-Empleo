@@ -8,6 +8,7 @@ from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
+from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
 
@@ -42,6 +43,18 @@ def proceso(proceso_id: int) -> dict[str, Any]:
     if resultado is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     return resultado
+
+@app.get("/procesos/{proceso_id}/publicaciones")
+def publicaciones_proceso(proceso_id: int, limite: int = Query(default=100, ge=1, le=200)) -> list[dict[str, Any]]:
+    if obtener_proceso(proceso_id) is None:
+        raise HTTPException(status_code=404, detail="Proceso no encontrado")
+    return listar_publicaciones(proceso_id=proceso_id, limite=limite)
+
+@app.get("/procesos/{proceso_id}/cambios")
+def cambios_proceso(proceso_id: int, limite: int = Query(default=100, ge=1, le=200)) -> list[dict[str, Any]]:
+    if obtener_proceso(proceso_id) is None:
+        raise HTTPException(status_code=404, detail="Proceso no encontrado")
+    return listar_cambios(proceso_id=proceso_id, limite=limite)
 
 def _validar_import_secret(x_import_secret: str | None) -> None:
     secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
