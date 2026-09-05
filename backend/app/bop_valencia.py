@@ -86,6 +86,30 @@ def _incluido(titulo: str) -> bool:
     return any(_sin(x) in n for x in INCLUIDOS)
 
 
+def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
+    r = client.get(BOP_URL)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+    candidatos: list[dict[str, Any]] = []
+    for a in soup.find_all("a"):
+        titulo = _norm(a.get_text(" ", strip=True))
+        n = _sin(titulo)
+        if not titulo or not any(x in n for x in ("convocatoria", "proceso selectivo", "oposicion", "seleccion", "bolsa")):
+            continue
+        candidatos.append({
+            "texto": titulo,
+            "href": a.get("href"),
+            "id": a.get("id"),
+            "name": a.get("name"),
+            "class": a.get("class"),
+            "onclick": a.get("onclick"),
+            "parent": _norm(a.parent.get_text(" ", strip=True))[:1500] if a.parent else "",
+        })
+        if len(candidatos) >= 30:
+            break
+    return {"url": str(r.url), "status": r.status_code, "ancho_html": len(r.text), "candidatos": candidatos}
+
+
 def descubrir_anuncios(client: httpx.Client) -> list[dict[str, Any]]:
     r = client.get(BOP_URL)
     r.raise_for_status()
