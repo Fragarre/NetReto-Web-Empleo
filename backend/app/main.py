@@ -56,7 +56,10 @@ def importar_gva_endpoint(
 ) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
     try:
-        return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
+        resultado = importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
+        resultado["limpieza_stale"] = limpiar_gva_stale()
+        resultado["correccion_turnos"] = corregir_turnos_gva()
+        return resultado
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
 
