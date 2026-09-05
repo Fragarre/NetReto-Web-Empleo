@@ -4,6 +4,7 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
+from .bop_valencia import importar_bop_valencia
 from .gva_fix import importar_gva_robusto
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -58,18 +59,32 @@ def proceso(proceso_id: int) -> dict[str, Any]:
     return resultado
 
 
+def _validar_import_secret(x_import_secret: str | None) -> None:
+    secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
+    if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+
 @app.post("/admin/import/gva")
 def importar_gva_endpoint(
     x_import_secret: str | None = Header(default=None),
     max_paginas: int = Query(default=1, ge=1, le=10),
     max_detalles: int | None = Query(default=10, ge=1, le=100),
 ) -> dict[str, Any]:
-    """Importación manual protegida por un secreto de administración."""
-    secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
-    if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
-        raise HTTPException(status_code=403, detail="No autorizado")
-
+    _validar_import_secret(x_import_secret)
     try:
         return importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
+
+
+@app.post("/admin/import/bop-valencia")
+def importar_bop_valencia_endpoint(
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Importa los anuncios de empleo de la Diputación publicados en el BOP."""
+    _validar_import_secret(x_import_secret)
+    try:
+        return importar_bop_valencia()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia: {exc}") from exc
