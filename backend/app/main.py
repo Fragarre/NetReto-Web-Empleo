@@ -79,13 +79,16 @@ def importar_gva_endpoint(
 
 
 @app.get("/admin/debug/bop")
-def debug_bop(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+def debug_bop(
+    x_import_secret: str | None = Header(default=None),
+    fecha: str | None = Query(default=None),
+) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
     try:
         import httpx
         headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
         with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
-            return diagnosticar_bop(client)
+            return diagnosticar_bop(client, fecha=fecha)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en diagnóstico BOP: {exc}") from exc
 
