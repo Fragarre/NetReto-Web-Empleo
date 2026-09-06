@@ -20,12 +20,14 @@ TIPOS_EXCLUIDOS = (
 PATRONES_TITULO_EXCLUIDOS = (
     "%promoción interna%",
     "%promocion interna%",
+    "%promoció interna%",
+    "%promocio interna%",
     "%concurso de traslados%",
     "%concurso de traslado%",
     "%libre designación%",
     "%libre designacion%",
     "%comisiones de servicio%",
-    "%comisiones de servicio%",
+    "%comissions de servei%",
 )
 
 
