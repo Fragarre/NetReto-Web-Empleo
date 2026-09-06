@@ -92,27 +92,62 @@ def cancelar_suscripcion(user_id: UUID, proceso_id: int) -> bool:
 
 
 def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]:
+    """Devuelve un feed unificado de publicaciones y cambios de convocatorias seguidas."""
     limite = max(1, min(limite, 200))
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT c.id, c.proceso_id, c.publicacion_id, c.tipo, c.campo,
-                       c.valor_anterior, c.valor_nuevo, c.resumen,
-                       c.significativo, c.detectado_at,
-                       p.identificador_estable, p.denominacion,
-                       o.nombre AS organismo_nombre
-                FROM cambios c
-                JOIN suscripciones s ON s.proceso_id = c.proceso_id
-                JOIN procesos p ON p.id = c.proceso_id
-                JOIN organismos o ON o.id = p.organismo_id
-                WHERE s.user_id = %s
-                  AND s.activa = TRUE
-                  AND p.es_oportunidad = TRUE
-                ORDER BY c.detectado_at DESC, c.id DESC
+                SELECT *
+                FROM (
+                    SELECT
+                        pub.id AS id,
+                        pub.proceso_id,
+                        p.identificador_estable,
+                        p.denominacion,
+                        o.nombre AS organismo_nombre,
+                        'PUBLICACION'::text AS novedad_tipo,
+                        pub.tipo,
+                        NULL::text AS campo,
+                        pub.titulo AS resumen,
+                        pub.fecha_publicacion::timestamptz AS detectado_at,
+                        TRUE AS significativo,
+                        pub.url
+                    FROM publicaciones pub
+                    JOIN suscripciones s ON s.proceso_id = pub.proceso_id
+                    JOIN procesos p ON p.id = pub.proceso_id
+                    JOIN organismos o ON o.id = p.organismo_id
+                    WHERE s.user_id = %s
+                      AND s.activa = TRUE
+                      AND p.es_oportunidad = TRUE
+
+                    UNION ALL
+
+                    SELECT
+                        c.id AS id,
+                        c.proceso_id,
+                        p.identificador_estable,
+                        p.denominacion,
+                        o.nombre AS organismo_nombre,
+                        'CAMBIO'::text AS novedad_tipo,
+                        c.tipo,
+                        c.campo,
+                        c.resumen,
+                        c.detectado_at,
+                        c.significativo,
+                        NULL::text AS url
+                    FROM cambios c
+                    JOIN suscripciones s ON s.proceso_id = c.proceso_id
+                    JOIN procesos p ON p.id = c.proceso_id
+                    JOIN organismos o ON o.id = p.organismo_id
+                    WHERE s.user_id = %s
+                      AND s.activa = TRUE
+                      AND p.es_oportunidad = TRUE
+                ) novedades
+                ORDER BY detectado_at DESC NULLS LAST, id DESC
                 LIMIT %s
                 """,
-                (str(user_id), limite),
+                (str(user_id), str(user_id), limite),
             )
             rows = cursor.fetchall()
             columns = [description.name for description in cursor.description]
