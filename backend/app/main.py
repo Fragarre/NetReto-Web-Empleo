@@ -21,7 +21,7 @@ app = FastAPI(title="NetReto Empleo API", version="0.1.0")
 def _usuario_con_empleo(
     usuario: UsuarioAutenticado = Depends(usuario_actual),
 ) -> UsuarioAutenticado:
-    exigir_employment_access(usuario.id)
+    exigir_employment_access(usuario.id, usuario.access_token)
     return usuario
 
 
@@ -32,7 +32,7 @@ def health() -> dict[str, str]:
 
 @app.get("/me")
 def me(usuario: UsuarioAutenticado = Depends(usuario_actual)) -> dict[str, Any]:
-    acceso = exigir_employment_access(usuario.id)
+    acceso = exigir_employment_access(usuario.id, usuario.access_token)
     return {
         "id": str(usuario.id),
         "email": usuario.email,
