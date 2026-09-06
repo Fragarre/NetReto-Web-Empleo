@@ -22,8 +22,8 @@ def suscripciones_usuario(user_id: UUID) -> list[dict[str, Any]]:
                              AND TRIM(pub.url) <> ''
                            ORDER BY
                              CASE
-                               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE '%convoc%' THEN 0
-                               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE '%convoc%' THEN 1
+                               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%', 'convoc', '%') THEN 0
+                               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%', 'convoc', '%') THEN 1
                                ELSE 2
                              END,
                              pub.fecha_publicacion ASC NULLS LAST,
