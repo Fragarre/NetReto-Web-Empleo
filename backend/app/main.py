@@ -13,7 +13,15 @@ from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
-from .seguimiento import preparar_notificaciones, listar_notificaciones_pendientes
+from .seguimiento import (
+    preparar_notificaciones,
+    listar_notificaciones_pendientes,
+    suscripciones_usuario,
+    suscripcion_usuario_proceso,
+    suscribirse,
+    cancelar_suscripcion,
+    cambios_usuario,
+)
 from .database import get_connection
 
 app = FastAPI(title="NetReto Empleo API", version="0.1.0")
@@ -111,6 +119,48 @@ def cambios_proceso(
     if obtener_proceso(proceso_id) is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
     return listar_cambios(proceso_id=proceso_id, limite=limite)
+
+
+@app.get("/suscripciones")
+def suscripciones(
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
+    return suscripciones_usuario(usuario.id)
+
+
+@app.get("/suscripciones/{proceso_id}")
+def suscripcion_proceso(
+    proceso_id: int,
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
+    return suscripcion_usuario_proceso(usuario.id, proceso_id) or {"activa": False, "proceso_id": proceso_id}
+
+
+@app.post("/suscripciones/{proceso_id}")
+def alta_suscripcion(
+    proceso_id: int,
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
+    try:
+        return suscribirse(usuario.id, proceso_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/suscripciones/{proceso_id}")
+def baja_suscripcion(
+    proceso_id: int,
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
+    return {"proceso_id": proceso_id, "activa": False, "cancelada": cancelar_suscripcion(usuario.id, proceso_id)}
+
+
+@app.get("/seguimiento/cambios")
+def seguimiento_cambios(
+    limite: int = Query(default=100, ge=1, le=200),
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> list[dict[str, Any]]:
+    return cambios_usuario(usuario.id, limite=limite)
 
 
 def _validar_import_secret(x_import_secret: str | None) -> None:
