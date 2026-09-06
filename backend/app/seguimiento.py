@@ -13,7 +13,23 @@ def suscripciones_usuario(user_id: UUID) -> list[dict[str, Any]]:
                        p.identificador_estable, p.denominacion, p.organismo_id,
                        o.nombre AS organismo_nombre, p.tipo_proceso, p.plazas,
                        p.estado, p.anio_convocatoria, p.fecha_apertura,
-                       p.fecha_cierre, p.fecha_examen, p.ultima_publicacion_at
+                       p.fecha_cierre, p.fecha_examen, p.ultima_publicacion_at,
+                       (
+                           SELECT pub.url
+                           FROM publicaciones pub
+                           WHERE pub.proceso_id = p.id
+                             AND pub.url IS NOT NULL
+                             AND TRIM(pub.url) <> ''
+                           ORDER BY
+                             CASE
+                               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE '%convoc%' THEN 0
+                               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE '%convoc%' THEN 1
+                               ELSE 2
+                             END,
+                             pub.fecha_publicacion ASC NULLS LAST,
+                             pub.id ASC
+                           LIMIT 1
+                       ) AS url_oficial
                 FROM suscripciones s
                 JOIN procesos p ON p.id = s.proceso_id
                 JOIN organismos o ON o.id = p.organismo_id
@@ -92,7 +108,12 @@ def cancelar_suscripcion(user_id: UUID, proceso_id: int) -> bool:
 
 
 def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]:
-    """Devuelve un feed unificado de publicaciones y cambios de convocatorias seguidas."""
+    """Devuelve novedades útiles de convocatorias seguidas.
+
+    Las publicaciones oficiales se muestran como novedades por sí mismas.
+    Los cambios internos solo se muestran cuando modifican un valor ya existente;
+    las altas iniciales desde NULL se consideran carga/enriquecimiento y no una novedad.
+    """
     limite = max(1, min(limite, 200))
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -135,14 +156,17 @@ def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]
                         c.resumen,
                         c.detectado_at,
                         c.significativo,
-                        NULL::text AS url
+                        pub.url
                     FROM cambios c
                     JOIN suscripciones s ON s.proceso_id = c.proceso_id
                     JOIN procesos p ON p.id = c.proceso_id
                     JOIN organismos o ON o.id = p.organismo_id
+                    LEFT JOIN publicaciones pub ON pub.id = c.publicacion_id
                     WHERE s.user_id = %s
                       AND s.activa = TRUE
                       AND p.es_oportunidad = TRUE
+                      AND c.significativo = TRUE
+                      AND c.valor_anterior IS NOT NULL
                 ) novedades
                 ORDER BY detectado_at DESC NULLS LAST, id DESC
                 LIMIT %s
@@ -167,6 +191,7 @@ def preparar_notificaciones() -> dict[str, Any]:
                 JOIN cambios c ON c.proceso_id = s.proceso_id
                 WHERE s.activa = TRUE
                   AND c.significativo = TRUE
+                  AND c.valor_anterior IS NOT NULL
                 ON CONFLICT (suscripcion_id, cambio_id) DO NOTHING
                 RETURNING id
                 """
@@ -181,6 +206,7 @@ def preparar_notificaciones() -> dict[str, Any]:
                 WHERE n.estado = 'PENDIENTE'
                   AND s.activa = TRUE
                   AND c.significativo = TRUE
+                  AND c.valor_anterior IS NOT NULL
                 """
             )
             pendientes = int(cursor.fetchone()[0])
