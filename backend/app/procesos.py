@@ -14,9 +14,6 @@ TIPOS_EXCLUIDOS = (
     "Anuncio difícil cobertura",
 )
 
-# Algunas fuentes clasifican de forma demasiado genérica procesos que por su
-# denominación son inequívocamente de una categoría excluida. Se controlan
-# también por título para evitar que reaparezcan en el catálogo.
 PATRONES_TITULO_EXCLUIDOS = (
     "%promoción interna%",
     "%promocion interna%",
@@ -42,6 +39,35 @@ def _condiciones_exclusion() -> tuple[str, list[Any]]:
     return " AND ".join(condiciones), params
 
 
+SELECT_FIELDS = """
+       p.id, p.organismo_id, o.nombre AS organismo_nombre,
+       p.codigo_externo, p.identificador_estable, p.denominacion,
+       p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
+       p.sistema_selectivo, p.turno, p.plazas, p.estado,
+       p.es_oportunidad,
+       p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
+       p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
+       p.lugar_examen, p.ultima_publicacion_at,
+       p.fuente_principal_id, p.datos_json,
+       (
+           SELECT pub.url
+           FROM publicaciones pub
+           WHERE pub.proceso_id = p.id
+             AND pub.url IS NOT NULL
+             AND TRIM(pub.url) <> ''
+           ORDER BY
+             CASE
+               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE '%convoc%' THEN 0
+               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE '%convoc%' THEN 1
+               ELSE 2
+             END,
+             pub.fecha_publicacion ASC NULLS LAST,
+             pub.id ASC
+           LIMIT 1
+       ) AS url_oficial
+"""
+
+
 def listar_procesos(
     *,
     organismo_id: int | None = None,
@@ -53,16 +79,7 @@ def listar_procesos(
     exclusion_sql, params = _condiciones_exclusion()
 
     query = f"""
-        SELECT p.id, p.organismo_id, o.nombre AS organismo_nombre,
-               p.codigo_externo, p.identificador_estable, p.denominacion,
-               p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
-               p.sistema_selectivo, p.turno, p.plazas, p.estado,
-               p.es_oportunidad,
-               p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
-               p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
-               p.lugar_examen, p.ultima_publicacion_at,
-               p.fuente_principal_id, p.datos_json,
-               p.created_at, p.updated_at
+        SELECT {SELECT_FIELDS}
         FROM procesos p
         JOIN organismos o ON o.id = p.organismo_id
         WHERE {exclusion_sql}
@@ -94,16 +111,7 @@ def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
         with connection.cursor() as cursor:
             cursor.execute(
                 f"""
-                SELECT p.id, p.organismo_id, o.nombre AS organismo_nombre,
-                       p.codigo_externo, p.identificador_estable, p.denominacion,
-                       p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
-                       p.sistema_selectivo, p.turno, p.plazas, p.estado,
-                       p.es_oportunidad,
-                       p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
-                       p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
-                       p.lugar_examen, p.ultima_publicacion_at,
-                       p.fuente_principal_id, p.datos_json,
-                       p.created_at, p.updated_at
+                SELECT {SELECT_FIELDS}
                 FROM procesos p
                 JOIN organismos o ON o.id = p.organismo_id
                 WHERE p.id = %s
