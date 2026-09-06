@@ -14,6 +14,7 @@ from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
 from .seguimiento import preparar_notificaciones, listar_notificaciones_pendientes
+from .database import get_connection
 
 app = FastAPI(title="NetReto Empleo API", version="0.1.0")
 
@@ -209,7 +210,13 @@ def importar_bop_valencia_endpoint(
     """Importa los anuncios de empleo de la Diputación publicados en el BOP."""
     _validar_import_secret(x_import_secret)
     try:
-        return importar_bop_valencia(historico=historico, dias=dias)
+        resultado = importar_bop_valencia(historico=historico, dias=dias)
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE procesos SET es_oportunidad=FALSE WHERE organismo_id=2")
+            connection.commit()
+        resultado["oportunidades_marcadas_no"] = True
+        return resultado
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia: {exc}") from exc
 
