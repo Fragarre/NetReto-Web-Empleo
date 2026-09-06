@@ -33,7 +33,8 @@ PATRONES_TITULO_EXCLUIDOS = (
 
 def _condiciones_exclusion() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
-    condiciones = [f"p.tipo_proceso NOT IN ({placeholders_tipo})"]
+    condiciones = ["p.es_oportunidad = TRUE"]
+    condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
     params: list[Any] = list(TIPOS_EXCLUIDOS)
     for patron in PATRONES_TITULO_EXCLUIDOS:
         condiciones.append("LOWER(COALESCE(p.denominacion, '')) NOT LIKE %s")
@@ -47,7 +48,7 @@ def listar_procesos(
     estado: str | None = None,
     limite: int = 100,
 ) -> list[dict[str, Any]]:
-    """Lista procesos incluidos en el catálogo público, con filtros básicos."""
+    """Lista oportunidades incluidas en el catálogo público."""
     limite = max(1, min(limite, 200))
     exclusion_sql, params = _condiciones_exclusion()
 
@@ -56,6 +57,7 @@ def listar_procesos(
                p.codigo_externo, p.identificador_estable, p.denominacion,
                p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
                p.sistema_selectivo, p.turno, p.plazas, p.estado,
+               p.es_oportunidad,
                p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
                p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
                p.lugar_examen, p.ultima_publicacion_at,
@@ -73,7 +75,7 @@ def listar_procesos(
         query += " AND p.estado = %s"
         params.append(estado)
 
-    query += " ORDER BY COALESCE(p.fecha_examen, p.fecha_convocatoria) DESC NULLS LAST, p.id DESC LIMIT %s"
+    query += " ORDER BY COALESCE(p.fecha_examen, p.fecha_convocatoria, p.fecha_apertura) DESC NULLS LAST, p.id DESC LIMIT %s"
     params.append(limite)
 
     with get_connection() as connection:
@@ -87,7 +89,6 @@ def listar_procesos(
 
 def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
     exclusion_sql, exclusion_params = _condiciones_exclusion()
-    exclusion_sql = exclusion_sql.replace("p.", "p.", 1)
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -97,6 +98,7 @@ def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
                        p.codigo_externo, p.identificador_estable, p.denominacion,
                        p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
                        p.sistema_selectivo, p.turno, p.plazas, p.estado,
+                       p.es_oportunidad,
                        p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
                        p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
                        p.lugar_examen, p.ultima_publicacion_at,
