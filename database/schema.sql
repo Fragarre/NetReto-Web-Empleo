@@ -39,6 +39,7 @@ CREATE TABLE procesos (
     turno TEXT,
     plazas INTEGER,
     estado TEXT NOT NULL DEFAULT 'EN_SEGUIMIENTO',
+    es_oportunidad BOOLEAN NOT NULL DEFAULT TRUE,
     anio_oep INTEGER,
     anio_convocatoria INTEGER,
     fecha_convocatoria DATE,
@@ -57,6 +58,7 @@ CREATE TABLE procesos (
 
 CREATE INDEX idx_procesos_organismo ON procesos(organismo_id);
 CREATE INDEX idx_procesos_estado ON procesos(estado);
+CREATE INDEX idx_procesos_oportunidad ON procesos(es_oportunidad);
 CREATE INDEX idx_procesos_anio_convocatoria ON procesos(anio_convocatoria);
 CREATE INDEX idx_procesos_fecha_cierre ON procesos(fecha_cierre);
 
