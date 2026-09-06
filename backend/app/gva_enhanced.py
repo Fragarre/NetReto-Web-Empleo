@@ -11,6 +11,17 @@ from .database import get_connection
 
 _BASE_PARSEAR_DETALLE = base.parsear_detalle
 
+TIPOS_INCLUIDOS = {
+    "oposicion",
+    "bolsa de trabajo",
+    "contratacion laboral temporal",
+    "contratacion laboral indefinida",
+    "proceso de estabilizacion",
+    "acto unico telematico",
+    "acte unic telematic",
+    "concurso-oposicion",
+}
+
 
 def _tipo_convocatoria(texto: str) -> str | None:
     normal = base._sin_acentos(texto)
@@ -18,7 +29,26 @@ def _tipo_convocatoria(texto: str) -> str | None:
     if not m:
         return None
     valor = base._normalizar(m.group(1))
-    patrones = (("bolsa de trabajo", "Bolsa de trabajo"), ("oposicion", "Oposición"), ("promocion interna", "Promoción interna"), ("contratacion laboral temporal", "Contratación laboral temporal"), ("contratacion laboral indefinida", "Contratación laboral indefinida"), ("proceso de estabilizacion", "Proceso de estabilización"), ("acto unico telematico", "Acto único telemático"), ("acte unic telematic", "Acto único telemático"), ("anuncio dificil cobertura", "Anuncio difícil cobertura"), ("concurso general de meritos", "Concurso general de méritos"), ("concurso-oposicion", "Concurso-oposición"), ("concurso", "Concurso"), ("cobertura interina", "Cobertura interina"), ("comision de servicio", "Comisión de servicio"), ("libre designacion", "Libre designación"), ("seleccion personal directivo", "Selección personal directivo"), ("procesos especiales", "Procesos especiales"), ("otros", "Otros"))
+    patrones = (
+        ("bolsa de trabajo", "Bolsa de trabajo"),
+        ("oposicion", "Oposición"),
+        ("promocion interna", "Promoción interna"),
+        ("contratacion laboral temporal", "Contratación laboral temporal"),
+        ("contratacion laboral indefinida", "Contratación laboral indefinida"),
+        ("proceso de estabilizacion", "Proceso de estabilización"),
+        ("acto unico telematico", "Acto único telemático"),
+        ("acte unic telematic", "Acto único telemático"),
+        ("anuncio dificil cobertura", "Anuncio difícil cobertura"),
+        ("concurso general de meritos", "Concurso general de méritos"),
+        ("concurso-oposicion", "Concurso-oposición"),
+        ("concurso", "Concurso"),
+        ("cobertura interina", "Cobertura interina"),
+        ("comision de servicio", "Comisión de servicio"),
+        ("libre designacion", "Libre designación"),
+        ("seleccion personal directivo", "Selección personal directivo"),
+        ("procesos especiales", "Procesos especiales"),
+        ("otros", "Otros"),
+    )
     for patron, nombre in patrones:
         if patron in valor:
             return nombre
@@ -28,7 +58,12 @@ def _tipo_convocatoria(texto: str) -> str | None:
 def _turno(texto: str) -> str | None:
     normal = base._sin_acentos(texto)
     candidatos = []
-    for patron, valor in (("promocion interna", "PROMOCION_INTERNA"), ("turno libre", "TURNO_LIBRE"), ("discapacidad intelectual", "DISCAPACIDAD_INTELECTUAL"), ("discapacidad", "DISCAPACIDAD")):
+    for patron, valor in (
+        ("promocion interna", "PROMOCION_INTERNA"),
+        ("turno libre", "TURNO_LIBRE"),
+        ("discapacidad intelectual", "DISCAPACIDAD_INTELECTUAL"),
+        ("discapacidad", "DISCAPACIDAD"),
+    ):
         posicion = normal.find(patron)
         if posicion >= 0:
             candidatos.append((posicion, valor))
@@ -36,8 +71,41 @@ def _turno(texto: str) -> str | None:
 
 
 def _es_incluido(tipo: str | None) -> bool:
-    normal = base._sin_acentos(tipo or "")
-    return any(patron in normal for patron in ("oposicion", "bolsa de trabajo", "promocion interna", "contratacion laboral", "proceso de estabilizacion", "acto unico telematico", "acte unic telematic", "anuncio dificil cobertura", "concurso general de meritos", "concurso-oposicion", "concurso", "cobertura interina", "comision de servicio", "libre designacion", "seleccion personal directivo"))
+    normal = base._sin_acentos(tipo or "").strip()
+    return normal in TIPOS_INCLUIDOS
+
+
+def _extraer_etapa_actual(texto: str) -> tuple[str | None, str]:
+    m = re.search(r"\bEtapa actual\s*:\s*(.+?)(?=\s+(?:C[oó]di?g?o|Codi)\s+SIA\b)", texto, re.I)
+    if not m:
+        return None, ""
+    etapa = base._normalizar(m.group(1))
+    bloque = texto[m.start():]
+    fin = re.search(r"\b(?:Informaci[oó]n|Informació)\s+b[aá]sica\b", bloque, re.I)
+    if fin:
+        bloque = bloque[:fin.start()]
+    return etapa, base._normalizar(bloque)
+
+
+def _fecha_de_etapa(bloque: str):
+    patrones = (
+        r"Fecha publicación\s*:?\s*(\d{2}[-/]\d{2}[-/]\d{4})",
+        r"Data publicació\s*:?\s*(\d{2}[-/]\d{2}[-/]\d{4})",
+    )
+    for patron in patrones:
+        m = re.search(patron, bloque, re.I)
+        if m:
+            return base._fecha(m.group(1))
+    return None
+
+
+def _estado_etapa_actual(bloque: str) -> str | None:
+    normal = base._sin_acentos(bloque)
+    if re.search(r"\b(plazo|termini)\s+(?:est[aá]|es )?abierto\b", normal) or "termini obert" in normal or "plazo abierto" in normal:
+        return "ABIERTO"
+    if "plazo cerrado" in normal or "plazo tancado" in normal or "termini tancat" in normal or "termini cerrat" in normal:
+        return "CERRADO"
+    return None
 
 
 def _extraer_organismo(texto: str) -> str | None:
@@ -48,7 +116,15 @@ def _extraer_organismo(texto: str) -> str | None:
     previo = normal[:m_etapa.start()]
     m_atras = list(re.finditer(r"\bAtrás\b", previo, re.I))
     bloque = previo[m_atras[-1].end():] if m_atras else previo[-2500:]
-    patrones = (r"Conselleria\s+[^:]{1,180}", r"Labora\s+[^:]{1,180}", r"Ag[eè]ncia\s+[^:]{1,180}", r"Institut\s+[^:]{1,180}", r"Instituto\s+[^:]{1,180}", r"Turisme Comunitat Valenciana", r"Generalitat Valenciana")
+    patrones = (
+        r"Conselleria\s+[^:]{1,180}",
+        r"Labora\s+[^:]{1,180}",
+        r"Ag[eè]ncia\s+[^:]{1,180}",
+        r"Institut\s+[^:]{1,180}",
+        r"Instituto\s+[^:]{1,180}",
+        r"Turisme Comunitat Valenciana",
+        r"Generalitat Valenciana",
+    )
     candidatos = []
     for patron in patrones:
         for m in re.finditer(patron, bloque, re.I):
@@ -57,7 +133,6 @@ def _extraer_organismo(texto: str) -> str | None:
 
 
 def _extraer_enlace_organismo_html(html: str) -> str | None:
-    """Extrae el href del enlace 'Enlace a organismo' de la ficha oficial."""
     if not html:
         return None
     soup = BeautifulSoup(html, "html.parser")
@@ -80,7 +155,18 @@ def _extraer_enlace_organismo_html(html: str) -> str | None:
 
 def _es_externo_por_texto(titulo: str, organismo_texto: str | None) -> bool:
     evidencia = base._sin_acentos(f"{titulo} {organismo_texto or ''}")
-    externos = ("administracion de justicia", "tramitacion procesal", "gestion procesal", "auxilio judicial", "orden pjc/", "ministerio de justicia", "secretaria de estado de justicia", "istecdigital", "iislafe", "instituto de investigacion sanitaria la fe")
+    externos = (
+        "administracion de justicia",
+        "tramitacion procesal",
+        "gestion procesal",
+        "auxilio judicial",
+        "orden pjc/",
+        "ministerio de justicia",
+        "secretaria de estado de justicia",
+        "istecdigital",
+        "iislafe",
+        "instituto de investigacion sanitaria la fe",
+    )
     return any(marca in evidencia for marca in externos)
 
 
@@ -110,21 +196,15 @@ def _host(url: str | None) -> str:
 
 
 def _resolver_organismo(titulo: str, organismo_texto: str | None, organismo_enlace: str | None) -> tuple[int | None, str]:
-    # La evidencia textual de la ficha tiene prioridad sobre el enlace cuando
-    # este apunta a un portal transversal de la Generalitat (p.ej. cjusticia).
-    # Primero descartamos procesos que son materialmente estatales/externos.
     if _es_externo_por_texto(titulo, organismo_texto):
         return None, "organismo_externo"
-
     if _es_generalitat_texto(organismo_texto):
         return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
-
     host = _host(organismo_enlace)
     if host == "cjusticia.gva.es" or host.endswith(".istecdigital.es") or host.endswith(".iislafe.es"):
         return None, "organismo_externo"
     if host == "gva.es" or host.endswith(".gva.es"):
         return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
-
     if organismo_texto:
         return None, "organismo_no_pertenece_a_generalitat"
     if organismo_enlace:
@@ -139,15 +219,26 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     organismo_texto = _extraer_organismo(texto)
     organismo_enlace = _extraer_enlace_organismo_html(html)
     organismo_id, motivo = _resolver_organismo(titulo, organismo_texto, organismo_enlace)
+    etapa_actual, bloque_etapa = _extraer_etapa_actual(texto)
+    fecha_etapa = _fecha_de_etapa(bloque_etapa)
+    estado_etapa = _estado_etapa_actual(bloque_etapa)
+
     proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
     proceso["turno"] = _turno(titulo) or _turno(texto)
     proceso["organismo_id"] = organismo_id
+    if estado_etapa:
+        proceso["estado"] = estado_etapa
+    if fecha_etapa and etapa_actual and "base" in base._sin_acentos(etapa_actual):
+        proceso["fecha_convocatoria"] = fecha_etapa
+
     proceso["datos_json"] = {
         **(proceso.get("datos_json") or {}),
         "organismo_detectado": organismo_texto,
         "organismo_enlace": organismo_enlace,
         "organismo_id_resuelto": organismo_id,
         "organismo_motivo": motivo,
+        "etapa_actual": etapa_actual,
+        "etapa_actual_fecha_publicacion": fecha_etapa.isoformat() if fecha_etapa else None,
     }
     return proceso
 
@@ -162,7 +253,10 @@ importar_gva_robusto = base.importar_gva_robusto
 def limpiar_gva_navegacion() -> dict[str, int]:
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM procesos WHERE organismo_id=%s AND denominacion='Navegación' AND datos_json->>'organismo_detectado'='Navegación'", (base.GVA_ORGANISMO_ID,))
+            cursor.execute(
+                "SELECT id FROM procesos WHERE organismo_id=%s AND denominacion='Navegación' AND datos_json->>'organismo_detectado'='Navegación'",
+                (base.GVA_ORGANISMO_ID,),
+            )
             ids = [row[0] for row in cursor.fetchall()]
             if not ids:
                 connection.commit()
