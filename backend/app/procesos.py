@@ -4,8 +4,6 @@ from .database import get_connection
 
 
 # Tipos que no forman parte del catálogo de empleo útil para el opositor.
-# Se excluyen aquí, en la capa de datos, para que no reaparezcan en la interfaz
-# aunque hayan sido importados desde una fuente oficial.
 TIPOS_EXCLUIDOS = (
     "Promoción interna",
     "Libre designación",
@@ -16,6 +14,30 @@ TIPOS_EXCLUIDOS = (
     "Anuncio difícil cobertura",
 )
 
+# Algunas fuentes clasifican de forma demasiado genérica procesos que por su
+# denominación son inequívocamente de una categoría excluida. Se controlan
+# también por título para evitar que reaparezcan en el catálogo.
+PATRONES_TITULO_EXCLUIDOS = (
+    "%promoción interna%",
+    "%promocion interna%",
+    "%concurso de traslados%",
+    "%concurso de traslado%",
+    "%libre designación%",
+    "%libre designacion%",
+    "%comisiones de servicio%",
+    "%comisiones de servicio%",
+)
+
+
+def _condiciones_exclusion() -> tuple[str, list[Any]]:
+    placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
+    condiciones = [f"p.tipo_proceso NOT IN ({placeholders_tipo})"]
+    params: list[Any] = list(TIPOS_EXCLUIDOS)
+    for patron in PATRONES_TITULO_EXCLUIDOS:
+        condiciones.append("LOWER(COALESCE(p.denominacion, '')) NOT LIKE %s")
+        params.append(patron)
+    return " AND ".join(condiciones), params
+
 
 def listar_procesos(
     *,
@@ -25,7 +47,7 @@ def listar_procesos(
 ) -> list[dict[str, Any]]:
     """Lista procesos incluidos en el catálogo público, con filtros básicos."""
     limite = max(1, min(limite, 200))
-    placeholders = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
+    exclusion_sql, params = _condiciones_exclusion()
 
     query = f"""
         SELECT p.id, p.organismo_id, o.nombre AS organismo_nombre,
@@ -39,9 +61,8 @@ def listar_procesos(
                p.created_at, p.updated_at
         FROM procesos p
         JOIN organismos o ON o.id = p.organismo_id
-        WHERE p.tipo_proceso NOT IN ({placeholders})
+        WHERE {exclusion_sql}
     """
-    params: list[Any] = list(TIPOS_EXCLUIDOS)
 
     if organismo_id is not None:
         query += " AND p.organismo_id = %s"
@@ -63,7 +84,8 @@ def listar_procesos(
 
 
 def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
-    placeholders = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
+    exclusion_sql, exclusion_params = _condiciones_exclusion()
+    exclusion_sql = exclusion_sql.replace("p.", "p.", 1)
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -81,9 +103,9 @@ def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
                 FROM procesos p
                 JOIN organismos o ON o.id = p.organismo_id
                 WHERE p.id = %s
-                  AND p.tipo_proceso NOT IN ({placeholders})
+                  AND {exclusion_sql}
                 """,
-                (proceso_id, *TIPOS_EXCLUIDOS),
+                (proceso_id, *exclusion_params),
             )
             row = cursor.fetchone()
             if row is None:
