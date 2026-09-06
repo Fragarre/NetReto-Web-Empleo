@@ -1,18 +1,127 @@
 from typing import Any
+from uuid import UUID
 
 from .database import get_connection
 
 
+def suscripciones_usuario(user_id: UUID) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.id, s.proceso_id, s.activa, s.created_at, s.updated_at,
+                       p.identificador_estable, p.denominacion, p.organismo_id,
+                       o.nombre AS organismo_nombre, p.tipo_proceso, p.plazas,
+                       p.estado, p.anio_convocatoria, p.fecha_apertura,
+                       p.fecha_cierre, p.fecha_examen, p.ultima_publicacion_at
+                FROM suscripciones s
+                JOIN procesos p ON p.id = s.proceso_id
+                JOIN organismos o ON o.id = p.organismo_id
+                WHERE s.user_id = %s AND s.activa = TRUE AND p.es_oportunidad = TRUE
+                ORDER BY s.created_at DESC, s.id DESC
+                """,
+                (str(user_id),),
+            )
+            rows = cursor.fetchall()
+            columns = [description.name for description in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def suscripcion_usuario_proceso(user_id: UUID, proceso_id: int) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.id, s.proceso_id, s.activa, s.created_at, s.updated_at
+                FROM suscripciones s
+                WHERE s.user_id = %s AND s.proceso_id = %s
+                """,
+                (str(user_id), proceso_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            columns = [description.name for description in cursor.description]
+    return dict(zip(columns, row))
+
+
+def suscribirse(user_id: UUID, proceso_id: int) -> dict[str, Any]:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT es_oportunidad FROM procesos WHERE id = %s",
+                (proceso_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValueError("Proceso no encontrado")
+            if not row[0]:
+                raise ValueError("El proceso no está disponible como oportunidad")
+
+            cursor.execute(
+                """
+                INSERT INTO suscripciones (user_id, proceso_id, activa)
+                VALUES (%s, %s, TRUE)
+                ON CONFLICT (user_id, proceso_id)
+                DO UPDATE SET activa = TRUE, updated_at = now()
+                RETURNING id, proceso_id, activa, created_at, updated_at
+                """,
+                (str(user_id), proceso_id),
+            )
+            row = cursor.fetchone()
+            connection.commit()
+            columns = [description.name for description in cursor.description]
+    return dict(zip(columns, row))
+
+
+def cancelar_suscripcion(user_id: UUID, proceso_id: int) -> bool:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE suscripciones
+                SET activa = FALSE, updated_at = now()
+                WHERE user_id = %s AND proceso_id = %s AND activa = TRUE
+                RETURNING id
+                """,
+                (str(user_id), proceso_id),
+            )
+            changed = cursor.fetchone() is not None
+            connection.commit()
+    return changed
+
+
+def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]:
+    limite = max(1, min(limite, 200))
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.proceso_id, c.publicacion_id, c.tipo, c.campo,
+                       c.valor_anterior, c.valor_nuevo, c.resumen,
+                       c.significativo, c.detectado_at,
+                       p.identificador_estable, p.denominacion,
+                       o.nombre AS organismo_nombre
+                FROM cambios c
+                JOIN suscripciones s ON s.proceso_id = c.proceso_id
+                JOIN procesos p ON p.id = c.proceso_id
+                JOIN organismos o ON o.id = p.organismo_id
+                WHERE s.user_id = %s
+                  AND s.activa = TRUE
+                  AND p.es_oportunidad = TRUE
+                ORDER BY c.detectado_at DESC, c.id DESC
+                LIMIT %s
+                """,
+                (str(user_id), limite),
+            )
+            rows = cursor.fetchall()
+            columns = [description.name for description in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
 def preparar_notificaciones() -> dict[str, Any]:
-    """Crea notificaciones pendientes para cambios significativos de procesos suscritos.
-
-    La operación es idempotente gracias a la restricción UNIQUE de
-    (suscripcion_id, cambio_id). No envía correo; únicamente deja preparada
-    la cola para el futuro servicio de notificaciones.
-    """
+    """Crea notificaciones pendientes para cambios significativos de procesos suscritos."""
     creadas = 0
-    existentes = 0
-
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -28,7 +137,6 @@ def preparar_notificaciones() -> dict[str, Any]:
                 """
             )
             creadas = len(cursor.fetchall())
-
             cursor.execute(
                 """
                 SELECT COUNT(*)
@@ -41,12 +149,7 @@ def preparar_notificaciones() -> dict[str, Any]:
                 """
             )
             pendientes = int(cursor.fetchone()[0])
-
-    return {
-        "creadas": creadas,
-        "pendientes": pendientes,
-        "envio": "no_realizado",
-    }
+    return {"creadas": creadas, "pendientes": pendientes, "envio": "no_realizado"}
 
 
 def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any]]:
@@ -75,5 +178,4 @@ def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any
             )
             rows = cursor.fetchall()
             columns = [description.name for description in cursor.description]
-
     return [dict(zip(columns, row)) for row in rows]
