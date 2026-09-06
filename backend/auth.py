@@ -26,6 +26,7 @@ _supabase_http = httpx.Client(
 class UsuarioAutenticado:
     id: UUID
     email: str
+    access_token: str
 
 
 def obtener_supabase_url() -> str:
@@ -80,7 +81,7 @@ def validar_access_token(token: str) -> UsuarioAutenticado:
 
     # El módulo de empleo comparte las cuentas de Supabase Auth con la web actual.
     # No exigimos un perfil local adicional: el UUID de Auth es la identidad común.
-    return UsuarioAutenticado(id=user_id, email=email)
+    return UsuarioAutenticado(id=user_id, email=email, access_token=token)
 
 
 def usuario_actual(
