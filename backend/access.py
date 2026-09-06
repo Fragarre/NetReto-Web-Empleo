@@ -1,21 +1,30 @@
 """Control de acceso del módulo de empleo.
 
-La identidad procede de Supabase Auth compartido con OpoCoach-Web.
-La suscripción de pago se determina en la tabla central public.subscriptions;
-la tabla public.suscripciones del módulo de empleo sigue reservada para alertas
-sobre procesos concretos.
+La identidad y la suscripción se consultan contra el mismo proyecto de Supabase
+que utiliza NetExamenes. La tabla public.subscriptions permanece centralizada;
+la base de datos de Empleo se reserva para los datos propios del módulo.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from uuid import UUID
 
-from psycopg.rows import dict_row
+import httpx
 
-from app.database import get_connection
+from auth import obtener_supabase_public_key, obtener_supabase_url
 
 ESTADOS_CON_ACCESO = {"active", "trialing", "past_due"}
+
+_supabase_http = httpx.Client(
+    timeout=10.0,
+    limits=httpx.Limits(
+        max_connections=20,
+        max_keepalive_connections=10,
+        keepalive_expiry=30.0,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -26,24 +35,37 @@ class EmploymentAccess:
     employment_access: bool
 
 
-def obtener_acceso_employment(user_id: UUID) -> EmploymentAccess:
-    """Consulta la suscripción de pago central asociada al usuario autenticado."""
-    with get_connection() as con:
-        with con.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                """
-                SELECT status
-                FROM public.subscriptions
-                WHERE user_id = %s
-                  AND proveedor = 'STRIPE'
-                ORDER BY updated_at DESC, id DESC
-                LIMIT 1
-                """,
-                (user_id,),
-            )
-            fila = cur.fetchone()
+def obtener_acceso_employment(user_id: UUID, access_token: str) -> EmploymentAccess:
+    """Consulta la suscripción central respetando las RLS de Supabase del usuario."""
+    url = (
+        f"{obtener_supabase_url()}/rest/v1/subscriptions"
+        "?select=status"
+        f"&user_id=eq.{user_id}"
+        "&proveedor=eq.STRIPE"
+        "&order=updated_at.desc,id.desc"
+        "&limit=1"
+    )
 
-    subscribed = bool(fila and fila["status"] in ESTADOS_CON_ACCESO)
+    try:
+        respuesta = _supabase_http.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "apikey": obtener_supabase_public_key(),
+            },
+        )
+    except httpx.HTTPError as exc:
+        raise RuntimeError("No se ha podido consultar la suscripción central en Supabase.") from exc
+
+    if respuesta.status_code != 200:
+        raise RuntimeError(
+            f"No se ha podido consultar la suscripción central en Supabase (HTTP {respuesta.status_code})."
+        )
+
+    datos = respuesta.json()
+    fila = datos[0] if isinstance(datos, list) and datos else None
+    subscribed = bool(fila and fila.get("status") in ESTADOS_CON_ACCESO)
+
     return EmploymentAccess(
         user_id=user_id,
         authenticated=True,
@@ -52,9 +74,9 @@ def obtener_acceso_employment(user_id: UUID) -> EmploymentAccess:
     )
 
 
-def exigir_employment_access(user_id: UUID) -> EmploymentAccess:
+def exigir_employment_access(user_id: UUID, access_token: str) -> EmploymentAccess:
     """Exige autenticación y suscripción de pago activa para el módulo de empleo."""
-    acceso = obtener_acceso_employment(user_id)
+    acceso = obtener_acceso_employment(user_id, access_token)
     if not acceso.employment_access:
         from fastapi import HTTPException
 
