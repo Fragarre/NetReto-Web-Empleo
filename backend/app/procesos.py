@@ -15,16 +15,16 @@ TIPOS_EXCLUIDOS = (
 )
 
 PATRONES_TITULO_EXCLUIDOS = (
-    "%promoción interna%",
-    "%promocion interna%",
-    "%promoció interna%",
-    "%promocio interna%",
-    "%concurso de traslados%",
-    "%concurso de traslado%",
-    "%libre designación%",
-    "%libre designacion%",
-    "%comisiones de servicio%",
-    "%comissions de servei%",
+    "promoción interna",
+    "promocion interna",
+    "promoció interna",
+    "promocio interna",
+    "concurso de traslados",
+    "concurso de traslado",
+    "libre designación",
+    "libre designacion",
+    "comisiones de servicio",
+    "comissions de servei",
 )
 
 
@@ -34,7 +34,9 @@ def _condiciones_exclusion() -> tuple[str, list[Any]]:
     condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
     params: list[Any] = list(TIPOS_EXCLUIDOS)
     for patron in PATRONES_TITULO_EXCLUIDOS:
-        condiciones.append("LOWER(COALESCE(p.denominacion, '')) NOT LIKE %s")
+        condiciones.append(
+            "POSITION(%s IN LOWER(COALESCE(p.denominacion, ''))) = 0"
+        )
         params.append(patron)
     return " AND ".join(condiciones), params
 
@@ -57,8 +59,8 @@ SELECT_FIELDS = """
              AND TRIM(pub.url) <> ''
            ORDER BY
              CASE
-               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE '%convoc%' THEN 0
-               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE '%convoc%' THEN 1
+               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 0
+               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 1
                ELSE 2
              END,
              pub.fecha_publicacion ASC NULLS LAST,
