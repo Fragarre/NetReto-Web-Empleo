@@ -7,7 +7,6 @@ la base de datos de Empleo se reserva para los datos propios del módulo.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -36,7 +35,12 @@ class EmploymentAccess:
 
 
 def obtener_acceso_employment(user_id: UUID, access_token: str) -> EmploymentAccess:
-    """Consulta la suscripción central respetando las RLS de Supabase del usuario."""
+    """Devuelve el estado del usuario en Empleo.
+
+    El módulo Empleo está abierto a cualquier usuario autenticado. La suscripción
+    central se sigue consultando para conservar el estado comercial disponible en
+    ``subscribed``, pero ya no condiciona el acceso al módulo.
+    """
     url = (
         f"{obtener_supabase_url()}/rest/v1/subscriptions"
         "?select=status"
@@ -46,6 +50,7 @@ def obtener_acceso_employment(user_id: UUID, access_token: str) -> EmploymentAcc
         "&limit=1"
     )
 
+    subscribed = False
     try:
         respuesta = _supabase_http.get(
             url,
@@ -54,34 +59,22 @@ def obtener_acceso_employment(user_id: UUID, access_token: str) -> EmploymentAcc
                 "apikey": obtener_supabase_public_key(),
             },
         )
-    except httpx.HTTPError as exc:
-        raise RuntimeError("No se ha podido consultar la suscripción central en Supabase.") from exc
-
-    if respuesta.status_code != 200:
-        raise RuntimeError(
-            f"No se ha podido consultar la suscripción central en Supabase (HTTP {respuesta.status_code})."
-        )
-
-    datos = respuesta.json()
-    fila = datos[0] if isinstance(datos, list) and datos else None
-    subscribed = bool(fila and fila.get("status") in ESTADOS_CON_ACCESO)
+        if respuesta.status_code == 200:
+            datos = respuesta.json()
+            fila = datos[0] if isinstance(datos, list) and datos else None
+            subscribed = bool(fila and fila.get("status") in ESTADOS_CON_ACCESO)
+    except (httpx.HTTPError, ValueError):
+        # El estado comercial no debe impedir el acceso al módulo Empleo.
+        subscribed = False
 
     return EmploymentAccess(
         user_id=user_id,
         authenticated=True,
         subscribed=subscribed,
-        employment_access=subscribed,
+        employment_access=True,
     )
 
 
 def exigir_employment_access(user_id: UUID, access_token: str) -> EmploymentAccess:
-    """Exige autenticación y suscripción de pago activa para el módulo de empleo."""
-    acceso = obtener_acceso_employment(user_id, access_token)
-    if not acceso.employment_access:
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=403,
-            detail="Esta función requiere una suscripción activa a OpoCoach.",
-        )
-    return acceso
+    """Exige únicamente que el usuario esté autenticado para Empleo."""
+    return obtener_acceso_employment(user_id, access_token)
