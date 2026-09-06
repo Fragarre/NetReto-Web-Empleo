@@ -6,7 +6,7 @@ from .database import get_connection
 # Tipos que no forman parte del catálogo de empleo útil para el opositor.
 # Se excluyen aquí, en la capa de datos, para que no reaparezcan en la interfaz
 # aunque hayan sido importados desde una fuente oficial.
-TIPOS_EXCLUIDOS = {
+TIPOS_EXCLUIDOS = (
     "Promoción interna",
     "Libre designación",
     "Concurso general de méritos",
@@ -14,7 +14,7 @@ TIPOS_EXCLUIDOS = {
     "Comisiones de servicio",
     "Difícil cobertura",
     "Anuncio difícil cobertura",
-}
+)
 
 
 def listar_procesos(
@@ -25,8 +25,9 @@ def listar_procesos(
 ) -> list[dict[str, Any]]:
     """Lista procesos incluidos en el catálogo público, con filtros básicos."""
     limite = max(1, min(limite, 200))
+    placeholders = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
 
-    query = """
+    query = f"""
         SELECT p.id, p.organismo_id, o.nombre AS organismo_nombre,
                p.codigo_externo, p.identificador_estable, p.denominacion,
                p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
@@ -38,33 +39,16 @@ def listar_procesos(
                p.created_at, p.updated_at
         FROM procesos p
         JOIN organismos o ON o.id = p.organismo_id
+        WHERE p.tipo_proceso NOT IN ({placeholders})
     """
-    conditions: list[str] = ["p.tipo_proceso NOT IN (%s)"]
-    params: list[Any] = [TIPOS_EXCLUIDOS]
+    params: list[Any] = list(TIPOS_EXCLUIDOS)
 
     if organismo_id is not None:
-        conditions.append("p.organismo_id = %s")
+        query += " AND p.organismo_id = %s"
         params.append(organismo_id)
     if estado is not None:
-        conditions.append("p.estado = %s")
+        query += " AND p.estado = %s"
         params.append(estado)
-
-    # psycopg no expande un set en un IN (%s); sustituimos por placeholders
-    # conservando los valores exclusivamente en parámetros.
-    placeholders = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
-    query = query.replace("p.tipo_proceso NOT IN (%s)", f"p.tipo_proceso NOT IN ({placeholders})")
-    params = list(TIPOS_EXCLUIDOS)
-
-    if organismo_id is not None:
-        params.append(organismo_id)
-    if estado is not None:
-        params.append(estado)
-
-    if conditions[1:]:
-        query += " WHERE " + " AND ".join(conditions[1:])
-    query += " WHERE " if not conditions[1:] else " AND "
-    query += f"p.tipo_proceso NOT IN ({placeholders})"
-    params.extend(TIPOS_EXCLUIDOS)
 
     query += " ORDER BY COALESCE(p.fecha_examen, p.fecha_convocatoria) DESC NULLS LAST, p.id DESC LIMIT %s"
     params.append(limite)
@@ -79,6 +63,8 @@ def listar_procesos(
 
 
 def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
+    placeholders = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -95,7 +81,7 @@ def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
                 FROM procesos p
                 JOIN organismos o ON o.id = p.organismo_id
                 WHERE p.id = %s
-                  AND p.tipo_proceso NOT IN ({", ".join(["%s"] * len(TIPOS_EXCLUIDOS))})
+                  AND p.tipo_proceso NOT IN ({placeholders})
                 """,
                 (proceso_id, *TIPOS_EXCLUIDOS),
             )
