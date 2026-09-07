@@ -61,7 +61,8 @@ def _fecha(s: str | None) -> date | None:
 
 
 def _convocatoria(s: str) -> str | None:
-    m = re.search(r"convocatoria\s+([A-Z]?\s*\d{1,3}/\d{2,4})", _sin(s), re.I)
+    n = _sin(s)
+    m = re.search(r"convocatoria\s+([a-z]?\s*\d{1,3}/\d{2,4}[a-z]?)\b", n, re.I)
     return re.sub(r"\s+", "", m.group(1)).upper() if m else None
 
 
@@ -69,7 +70,7 @@ def _anio_convocatoria(s: str) -> int | None:
     c = _convocatoria(s)
     if not c:
         return None
-    m = re.search(r"/(\d{2,4})$", c)
+    m = re.search(r"/(\d{2,4})(?:[A-Z])?$", c, re.I)
     if not m:
         return None
     n = int(m.group(1))
@@ -116,12 +117,12 @@ def _fecha_convocatoria(s: str) -> date | None:
 
 def _turno(s: str) -> str | None:
     n = _sin(s)
+    if "estabilizacion" in n:
+        return "ESTABILIZACION"
     if "promocion interna" in n:
         return "PROMOCION_INTERNA"
     if "turno libre" in n or "oposicion lliure" in n or "oposicion libre" in n:
         return "TURNO_LIBRE"
-    if "estabilizacion" in n:
-        return "ESTABILIZACION"
     return None
 
 
@@ -306,13 +307,8 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
                     grupo, subgrupo = _grupo_subgrupo(contenido)
                     plazas = _plazas(contenido)
                     ultima = datetime.combine(fecha, datetime.min.time(), tzinfo=timezone.utc) if fecha else None
-
-                    cursor.execute(
-                        "SELECT id, denominacion, grupo, subgrupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_convocatoria, datos_json FROM procesos WHERE identificador_estable=%s",
-                        (estable,),
-                    )
+                    cursor.execute("SELECT id, denominacion, grupo, subgrupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_convocatoria, datos_json FROM procesos WHERE identificador_estable=%s", (estable,))
                     existente = cursor.fetchone()
-
                     if existente:
                         proceso_id = existente[0]
                         if es_base:
@@ -320,40 +316,24 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
                             campos = ("denominacion", "grupo", "subgrupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_convocatoria")
                             for i, campo in enumerate(campos, 1):
                                 if existente[i] != nuevos[i - 1] and nuevos[i - 1] is not None:
-                                    cursor.execute(
-                                        "INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,TRUE)",
-                                        (proceso_id, "ACTUALIZACION", campo, str(existente[i]) if existente[i] is not None else None, str(nuevos[i - 1]), f"Actualización de la convocatoria: {campo}"),
-                                    )
+                                    cursor.execute("INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,TRUE)", (proceso_id, "ACTUALIZACION", campo, str(existente[i]) if existente[i] is not None else None, str(nuevos[i - 1]), f"Actualización de la convocatoria: {campo}"))
                                     stats["cambios"] += 1
-                            cursor.execute(
-                                "UPDATE procesos SET denominacion=%s,grupo=COALESCE(%s,grupo),subgrupo=COALESCE(%s,subgrupo),tipo_proceso=%s,turno=COALESCE(%s,turno),plazas=COALESCE(%s,plazas),estado=%s,anio_convocatoria=COALESCE(%s,anio_convocatoria),fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,datos_json=%s,updated_at=NOW() WHERE id=%s",
-                                (nuevos[0], nuevos[1], nuevos[2], nuevos[3], nuevos[4], nuevos[5], nuevos[6], nuevos[7], nuevos[8], ultima, FUENTE_ID, Jsonb({**(existente[10] or {}), "url_convocatoria": anuncio["url"], "registro_convocatoria": registro}), proceso_id),
-                            )
+                            cursor.execute("UPDATE procesos SET denominacion=%s,grupo=COALESCE(%s,grupo),subgrupo=COALESCE(%s,subgrupo),tipo_proceso=%s,turno=COALESCE(%s,turno),plazas=COALESCE(%s,plazas),estado=%s,anio_convocatoria=COALESCE(%s,anio_convocatoria),fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,datos_json=%s,updated_at=NOW() WHERE id=%s", (nuevos[0], nuevos[1], nuevos[2], nuevos[3], nuevos[4], nuevos[5], nuevos[6], nuevos[7], nuevos[8], ultima, FUENTE_ID, Jsonb({**(existente[10] or {}), "url_convocatoria": anuncio["url"], "registro_convocatoria": registro}), proceso_id))
                         else:
                             cursor.execute("UPDATE procesos SET ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,updated_at=NOW() WHERE id=%s", (ultima, FUENTE_ID, proceso_id))
                     else:
-                        cursor.execute(
-                            "INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,es_oportunidad,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s) RETURNING id",
-                            (ORGANISMO_ID, registro, estable, titulo, grupo, subgrupo, _tipo(contenido), _turno(contenido), plazas, "EN_CURSO", anio, fecha_convocatoria, ultima, FUENTE_ID, Jsonb({"registro": registro, "url_ultima_publicacion": anuncio["url"], "convocatoria_identificada": _convocatoria(contenido)})),
-                        )
+                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,es_oportunidad,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s) RETURNING id", (ORGANISMO_ID, registro, estable, titulo, grupo, subgrupo, _tipo(contenido), _turno(contenido), plazas, "EN_CURSO", anio, fecha_convocatoria, ultima, FUENTE_ID, Jsonb({"registro": registro, "url_ultima_publicacion": anuncio["url"], "convocatoria_identificada": _convocatoria(contenido)})))
                         proceso_id = cursor.fetchone()[0]
                         stats["procesos"] += 1
-
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     cursor.execute("SELECT id FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
                     publicacion = cursor.fetchone()
                     if publicacion is None:
-                        cursor.execute(
-                            "INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-                            (proceso_id, FUENTE_ID, registro, tipo_publicacion, titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"], "es_convocatoria_base": es_base})),
-                        )
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (proceso_id, FUENTE_ID, registro, tipo_publicacion, titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"], "es_convocatoria_base": es_base})))
                         publicacion_id = cursor.fetchone()[0]
                         stats["publicaciones"] += 1
                         if not es_base:
-                            cursor.execute(
-                                "INSERT INTO cambios (proceso_id,publicacion_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,%s,TRUE)",
-                                (proceso_id, publicacion_id, "PUBLICACION", "publicacion", None, registro, f"Nueva publicación oficial: {titulo}"),
-                            )
+                            cursor.execute("INSERT INTO cambios (proceso_id,publicacion_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,%s,TRUE)", (proceso_id, publicacion_id, "PUBLICACION", "publicacion", None, registro, f"Nueva publicación oficial: {titulo}"))
                             stats["cambios"] += 1
                     stats["anuncios"].append({"registro": registro, "titulo": titulo, "fecha_publicacion": fecha.isoformat() if fecha else None, "proceso_id": proceso_id, "identificador_estable": estable, "tipo_publicacion": tipo_publicacion})
             connection.commit()
