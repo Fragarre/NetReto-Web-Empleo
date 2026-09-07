@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from typing import Any
@@ -30,7 +31,6 @@ def _norm(value: str | None) -> str:
 
 
 def _sin_acentos(value: str) -> str:
-    import unicodedata
     return "".join(c for c in unicodedata.normalize("NFD", value.lower()) if unicodedata.category(c) != "Mn")
 
 
@@ -104,13 +104,23 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
         titulo = f"{plaza} — {entidad}"
 
     normal = _sin_acentos(texto)
+    # Una convocatoria mixta (p. ej. 1 turno libre + 1 promoción interna)
+    # sigue siendo una oportunidad. Solo excluimos cuando no existe ninguna
+    # indicación de acceso libre y el proceso está identificado como interno.
+    tiene_turno_libre = "turno libre" in normal or "oposicion libre" in normal
+    tiene_promocion_interna = "promocion interna" in normal
     turno = None
-    if "promocion interna" in normal:
-        turno = "PROMOCION_INTERNA"
-    elif "turno libre" in normal or "oposicion libre" in normal:
+    if tiene_turno_libre:
         turno = "TURNO_LIBRE"
+    elif tiene_promocion_interna:
+        turno = "PROMOCION_INTERNA"
 
     sistema = tipo_prueba.upper() if tipo_prueba else None
+    es_exclusivo_interno = tiene_promocion_interna and not tiene_turno_libre
+    es_oportunidad = not es_exclusivo_interno and not any(
+        _sin_acentos(x) in normal for x in EXCLUIDOS if "promocion interna" not in _sin_acentos(x)
+    )
+
     anio = None
     m_anio = re.search(r"convocatoria\s+(?:\w+\s+)?(20\d{2})", _sin_acentos(rss_title + " " + texto), re.I)
     if m_anio:
@@ -127,12 +137,19 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
         "turno": turno,
         "plazas": vacantes,
         "estado": "EN_CURSO",
-        "es_oportunidad": not any(_sin_acentos(x) in normal for x in EXCLUIDOS),
+        "es_oportunidad": es_oportunidad,
         "anio_convocatoria": anio,
         "fecha_apertura": fecha_apertura,
         "fecha_cierre": fecha_cierre,
         "ultima_publicacion_at": datetime.now(timezone.utc),
-        "datos_json": {"url_detalle": url, "entidad": entidad, "observaciones": observaciones, "rss_title": rss_title},
+        "datos_json": {
+            "url_detalle": url,
+            "entidad": entidad,
+            "observaciones": observaciones,
+            "rss_title": rss_title,
+            "tiene_turno_libre": tiene_turno_libre,
+            "tiene_promocion_interna": tiene_promocion_interna,
+        },
         "publicacion": {
             "referencia": f"DALI:{codigo}:{hash_contenido}",
             "tipo": "DETALLE",
