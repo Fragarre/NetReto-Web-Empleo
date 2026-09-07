@@ -5,6 +5,7 @@ import re
 import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -47,7 +48,14 @@ def _fecha(value: str | None) -> date | None:
 def _fecha_rss(value: str | None) -> date | None:
     if not value:
         return None
-    return _fecha(value) or _fecha(re.sub(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s*", "", value, flags=re.I))
+    directa = _fecha(value)
+    if directa:
+        return directa
+    try:
+        dt = parsedate_to_datetime(value)
+        return dt.date()
+    except (TypeError, ValueError, OverflowError):
+        return _fecha(re.sub(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s*", "", value, flags=re.I))
 
 
 def _int(value: str | None) -> int | None:
@@ -57,7 +65,9 @@ def _int(value: str | None) -> int | None:
     return int(m.group(0)) if m else None
 
 
-def _parse_rss(xml: str) -> list[tuple[str, str, date | None]]:
+def _parse_rss(xml: str | bytes) -> list[tuple[str, str, date | None]]:
+    # Parseamos los bytes originales para respetar la codificación declarada
+    # por el XML y evitar textos mojibake como "DiputaciÃ³n".
     root = ET.fromstring(xml)
     resultado: list[tuple[str, str, date | None]] = []
     for item in root.findall(".//item"):
@@ -104,9 +114,6 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
         titulo = f"{plaza} — {entidad}"
 
     normal = _sin_acentos(texto)
-    # Una convocatoria mixta (p. ej. 1 turno libre + 1 promoción interna)
-    # sigue siendo una oportunidad. Solo excluimos cuando no existe ninguna
-    # indicación de acceso libre y el proceso está identificado como interno.
     tiene_turno_libre = "turno libre" in normal or "oposicion libre" in normal
     tiene_promocion_interna = "promocion interna" in normal
     turno = None
@@ -205,7 +212,7 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         rss = client.get(RSS_URL)
         rss.raise_for_status()
-        enlaces = _parse_rss(rss.text)[:max_detalles]
+        enlaces = _parse_rss(rss.content)[:max_detalles]
         estadisticas["descubiertos"] = len(enlaces)
         with get_connection() as connection:
             with connection.cursor() as cursor:
@@ -261,14 +268,14 @@ def diagnosticar_diputacion_alicante() -> dict[str, Any]:
         r.raise_for_status()
         rss = client.get(RSS_URL)
         rss.raise_for_status()
-        enlaces = _parse_rss(rss.text)
+        enlaces = _parse_rss(rss.content)
         return {
             "seguimiento_url": str(r.url),
             "seguimiento_status": r.status_code,
             "seguimiento_html": len(r.text),
             "rss_url": str(rss.url),
             "rss_status": rss.status_code,
-            "rss_html": len(rss.text),
+            "rss_html": len(rss.content),
             "rss_items": len(enlaces),
             "muestra": [{"titulo": t, "url": u, "fecha": d.isoformat() if d else None} for t, u, d in enlaces[:10]],
         }
