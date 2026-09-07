@@ -132,3 +132,10 @@ CREATE TABLE notificaciones (
 
 CREATE INDEX idx_notificaciones_pendientes
     ON notificaciones(estado, created_at);
+
+-- Estado de lectura del aviso de novedades. No depende del navegador/dispositivo.
+CREATE TABLE seguimiento_estado_usuario (
+    user_id UUID PRIMARY KEY,
+    ultima_novedad_vista_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
