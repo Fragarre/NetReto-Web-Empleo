@@ -32,10 +32,10 @@ def _condiciones_exclusion() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
     condiciones = ["p.es_oportunidad = TRUE"]
     condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
-    # La pantalla pública es de oportunidades activas. Un proceso cuyo plazo
-    # de inscripción ya ha terminado no debe seguir apareciendo aunque la
-    # fuente todavía conserve temporalmente el estado ABIERTO.
-    condiciones.append("(p.fecha_cierre IS NULL OR p.fecha_cierre >= CURRENT_DATE)")
+    # El cierre del plazo de inscripción NO implica que haya finalizado el
+    # proceso selectivo. Una convocatoria puede seguir siendo de interés para
+    # quien ya se inscribió y desea recibir sus publicaciones y cambios.
+    # La exclusión se basa en el estado final del proceso, no en fecha_cierre.
     condiciones.append("COALESCE(LOWER(p.estado), '') NOT IN ('cerrado', 'finalizado')")
     params: list[Any] = list(TIPOS_EXCLUIDOS)
     for patron in PATRONES_TITULO_EXCLUIDOS:
