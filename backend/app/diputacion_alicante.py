@@ -18,6 +18,12 @@ BASE_URL = "https://sede.diputacionalicante.es/"
 ORGANISMO_ID = 4
 FUENTE_ID = 4
 
+EXCLUIDOS = (
+    "promocion interna", "promoción interna", "libre designacion", "libre designación",
+    "concurso general de meritos", "concurso general de méritos", "concurso de traslados",
+    "comision de servicios", "comisión de servicios",
+)
+
 
 def _norm(value: str | None) -> str:
     return " ".join((value or "").replace("\xa0", " ").split())
@@ -38,6 +44,12 @@ def _fecha(value: str | None) -> date | None:
     return None
 
 
+def _fecha_rss(value: str | None) -> date | None:
+    if not value:
+        return None
+    return _fecha(value) or _fecha(re.sub(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s*", "", value, flags=re.I))
+
+
 def _int(value: str | None) -> int | None:
     if not value:
         return None
@@ -45,14 +57,15 @@ def _int(value: str | None) -> int | None:
     return int(m.group(0)) if m else None
 
 
-def _parse_rss(xml: str) -> list[tuple[str, str]]:
+def _parse_rss(xml: str) -> list[tuple[str, str, date | None]]:
     root = ET.fromstring(xml)
-    resultado: list[tuple[str, str]] = []
+    resultado: list[tuple[str, str, date | None]] = []
     for item in root.findall(".//item"):
         title = _norm(item.findtext("title"))
         link = _norm(item.findtext("link"))
+        pub_date = _fecha_rss(item.findtext("pubDate"))
         if link:
-            resultado.append((title, urljoin(BASE_URL, link)))
+            resultado.append((title, urljoin(BASE_URL, link), pub_date))
     return resultado
 
 
@@ -97,17 +110,12 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     elif "turno libre" in normal or "oposicion libre" in normal:
         turno = "TURNO_LIBRE"
 
-    sistema = None
-    if tipo_prueba:
-        sistema = tipo_prueba.upper()
-
+    sistema = tipo_prueba.upper() if tipo_prueba else None
     anio = None
     m_anio = re.search(r"convocatoria\s+(?:\w+\s+)?(20\d{2})", _sin_acentos(rss_title + " " + texto), re.I)
     if m_anio:
         anio = int(m_anio.group(1))
 
-    # El RSS de esta sede alimenta el seguimiento de convocatorias; se conserva
-    # el proceso como EN_CURSO y las publicaciones posteriores como historial.
     hash_contenido = hashlib.sha256(html.encode("utf-8")).hexdigest()
     return {
         "codigo_externo": codigo,
@@ -119,22 +127,16 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
         "turno": turno,
         "plazas": vacantes,
         "estado": "EN_CURSO",
-        "es_oportunidad": True,
+        "es_oportunidad": not any(_sin_acentos(x) in normal for x in EXCLUIDOS),
         "anio_convocatoria": anio,
         "fecha_apertura": fecha_apertura,
         "fecha_cierre": fecha_cierre,
         "ultima_publicacion_at": datetime.now(timezone.utc),
-        "datos_json": {
-            "url_detalle": url,
-            "entidad": entidad,
-            "observaciones": observaciones,
-            "rss_title": rss_title,
-        },
+        "datos_json": {"url_detalle": url, "entidad": entidad, "observaciones": observaciones, "rss_title": rss_title},
         "publicacion": {
             "referencia": f"DALI:{codigo}:{hash_contenido}",
             "tipo": "DETALLE",
             "titulo": rss_title or titulo,
-            "fecha_publicacion": date.today(),
             "url": url,
             "contenido_hash": hash_contenido,
             "contenido_texto": texto,
@@ -160,6 +162,7 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
             turno=COALESCE(EXCLUDED.turno, procesos.turno),
             plazas=COALESCE(EXCLUDED.plazas, procesos.plazas),
             estado=EXCLUDED.estado,
+            es_oportunidad=EXCLUDED.es_oportunidad,
             anio_convocatoria=COALESCE(EXCLUDED.anio_convocatoria, procesos.anio_convocatoria),
             fecha_apertura=COALESCE(EXCLUDED.fecha_apertura, procesos.fecha_apertura),
             fecha_cierre=COALESCE(EXCLUDED.fecha_cierre, procesos.fecha_cierre),
@@ -180,11 +183,8 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
 
 
 def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
-    headers = {
-        "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
-        "Accept-Language": "es-ES,es;q=0.9",
-    }
-    estadisticas = {"descubiertos": 0, "procesos": 0, "publicaciones": 0, "errores": 0}
+    headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
+    estadisticas = {"descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "errores": 0}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         rss = client.get(RSS_URL)
         rss.raise_for_status()
@@ -192,31 +192,66 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
         estadisticas["descubiertos"] = len(enlaces)
         with get_connection() as connection:
             with connection.cursor() as cursor:
-                for title, url in enlaces:
+                for title, url, rss_date in enlaces:
                     try:
                         respuesta = client.get(url)
                         respuesta.raise_for_status()
                         datos = parsear_detalle(url, title, respuesta.text)
-                        proceso_id, _ = _upsert(cursor, datos)
-                        estadisticas["procesos"] += 1
+                        proceso_id, inserted = _upsert(cursor, datos)
+                        if inserted:
+                            estadisticas["procesos"] += 1
                         pub = datos["publicacion"]
+                        referencia = pub["referencia"]
+                        fecha_publicacion = rss_date or date.today()
                         cursor.execute(
                             """
                             INSERT INTO publicaciones (
                                 proceso_id, fuente_id, referencia, tipo, titulo,
                                 fecha_publicacion, url, contenido_hash, contenido_texto, datos_json
-                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (fuente_id, referencia, url) DO NOTHING
                             RETURNING id
                             """,
                             (
-                                proceso_id, FUENTE_ID, pub["referencia"], pub["tipo"], pub["titulo"],
-                                pub["fecha_publicacion"], pub["url"], pub["contenido_hash"],
+                                proceso_id, FUENTE_ID, referencia, pub["tipo"], pub["titulo"],
+                                fecha_publicacion, pub["url"], pub["contenido_hash"],
                                 pub["contenido_texto"], pub["datos_json"],
                             ),
                         )
-                        if cursor.fetchone():
+                        publicacion = cursor.fetchone()
+                        if publicacion:
                             estadisticas["publicaciones"] += 1
+                            cursor.execute(
+                                """
+                                INSERT INTO cambios (
+                                    proceso_id, publicacion_id, tipo, campo, valor_anterior,
+                                    valor_nuevo, resumen, significativo
+                                ) VALUES (%s,%s,'PUBLICACION','publicacion',NULL,%s,%s,TRUE)
+                                """,
+                                (proceso_id, publicacion[0], referencia, f"Nueva publicación oficial: {pub['titulo']}"),
+                            )
+                            estadisticas["cambios"] += 1
                     except Exception:
                         estadisticas["errores"] += 1
+            connection.commit()
     return estadisticas
+
+
+def diagnosticar_diputacion_alicante() -> dict[str, Any]:
+    headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
+    with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
+        r = client.get(SEGUIMIENTO_URL)
+        r.raise_for_status()
+        rss = client.get(RSS_URL)
+        rss.raise_for_status()
+        enlaces = _parse_rss(rss.text)
+        return {
+            "seguimiento_url": str(r.url),
+            "seguimiento_status": r.status_code,
+            "seguimiento_html": len(r.text),
+            "rss_url": str(rss.url),
+            "rss_status": rss.status_code,
+            "rss_html": len(rss.text),
+            "rss_items": len(enlaces),
+            "muestra": [{"titulo": t, "url": u, "fecha": d.isoformat() if d else None} for t, u, d in enlaces[:10]],
+        }
