@@ -21,20 +21,26 @@ DOWNLOAD_URL = "https://bop.dival.es/bop/downloads"
 ORGANISMO_ID = 2
 FUENTE_ID = 2
 
-INCLUIDOS = ("convocatoria", "proceso selectivo", "selección", "seleccion", "oposición", "oposicion", "bolsa de trabajo", "bolsa de empleo")
-EXCLUIDOS = ("provisión del puesto", "provision del puesto", "provisión de puestos", "provision de puestos", "provisión del lugar", "provision del lloc", "provisió del lloc", "libre designación", "libre designacion", "lliure designació", "lliure designacio", "nomenament", "nombramiento")
+INCLUIDOS = (
+    "convocatoria", "proceso selectivo", "selección", "seleccion",
+    "oposición", "oposicion", "bolsa de trabajo", "bolsa de empleo",
+)
+EXCLUIDOS = (
+    "provisión del puesto", "provision del puesto", "provisión de puestos",
+    "provision de puestos", "provisión del lugar", "provision del lloc",
+    "provisió del lloc", "libre designación", "libre designacion",
+    "lliure designació", "lliure designacio", "nomenament", "nombramiento",
+)
 
 NUMEROS = {
-    "una": 1, "uno": 1, "un": 1,
-    "dos": 2, "tres": 3, "cuatro": 4, "quatre": 4,
-    "cinco": 5, "cinc": 5, "seis": 6, "sis": 6,
-    "siete": 7, "set": 7, "ocho": 8, "vuit": 8,
-    "nueve": 9, "nou": 9, "diez": 10, "deu": 10,
-    "once": 11, "onze": 11, "doce": 12, "dotze": 12,
-    "trece": 13, "tretze": 13, "catorce": 14, "catorze": 14,
-    "quince": 15, "quinze": 15, "dieciseis": 16, "setze": 16,
-    "dieciséis": 16, "diecisiete": 17, "dieciocho": 18, "diecinueve": 19,
-    "veinte": 20, "vint": 20,
+    "una": 1, "uno": 1, "un": 1, "dos": 2, "tres": 3,
+    "cuatro": 4, "quatre": 4, "cinco": 5, "cinc": 5, "seis": 6,
+    "sis": 6, "siete": 7, "set": 7, "ocho": 8, "vuit": 8,
+    "nueve": 9, "nou": 9, "diez": 10, "deu": 10, "once": 11,
+    "onze": 11, "doce": 12, "dotze": 12, "trece": 13, "tretze": 13,
+    "catorce": 14, "catorze": 14, "quince": 15, "quinze": 15,
+    "dieciseis": 16, "setze": 16, "dieciséis": 16, "diecisiete": 17,
+    "dieciocho": 18, "diecinueve": 19, "veinte": 20, "vint": 20,
 }
 
 
@@ -74,18 +80,15 @@ def _plazas(s: str) -> int | None:
     n = _sin(s)
     patrones = (
         r"(?:seleccion|seleccio)\s+de\s+(\d+)\s+(?:plazas?|places?)",
-        r"(?:seleccion|seleccio)\s+de\s+(una|uno|un|dos|tres|cuatro|quatre|cinco|cinc|seis|sis|siete|set|ocho|vuit|nueve|nou|diez|deu|once|onze|doce|dotze|trece|tretze|catorce|catorze|quince|quinze|dieciseis|dieciseis|diecisiete|dieciocho|diecinueve|veinte|vint)\s+(?:plazas?|places?)",
+        r"(?:seleccion|seleccio)\s+de\s+(una|uno|un|dos|tres|cuatro|quatre|cinco|cinc|seis|sis|siete|set|ocho|vuit|nueve|nou|diez|deu|once|onze|doce|dotze|trece|tretze|catorce|catorze|quince|quinze|dieciseis|dieciséis|diecisiete|dieciocho|diecinueve|veinte|vint)\s+(?:plazas?|places?)",
         r"convocatoria\s+de\s+(\d+)\s+(?:plazas?|places?)",
         r"convocatoria\s+de\s+(una|uno|un|dos|tres|cuatro|quatre|cinco|cinc|seis|sis|siete|set|ocho|vuit|nueve|nou|diez|deu)\s+(?:plazas?|places?)",
-        r"seleccion\s+de\s+(\d+)\s+(?:plazas?|places?)",
     )
     for p in patrones:
         m = re.search(p, n, re.I)
         if m:
             valor = m.group(1).lower()
-            if valor.isdigit():
-                return int(valor)
-            return NUMEROS.get(valor)
+            return int(valor) if valor.isdigit() else NUMEROS.get(valor)
     return None
 
 
@@ -95,8 +98,7 @@ def _grupo_subgrupo(s: str) -> tuple[str | None, str | None]:
     if not m:
         return None, None
     subgrupo = m.group(1).upper()
-    grupo = subgrupo.split("/")[0][0]
-    return grupo, subgrupo
+    return subgrupo.split("/")[0][0], subgrupo
 
 
 def _fecha_convocatoria(s: str) -> date | None:
@@ -125,9 +127,9 @@ def _turno(s: str) -> str | None:
 
 def _tipo(s: str) -> str:
     n = _sin(s)
-    if "bolsa de trabajo" in n or "bolsa de empleo" in n or "borsa de treball" in n:
+    if any(x in n for x in ("bolsa de trabajo", "bolsa de empleo", "borsa de treball")):
         return "Bolsa de trabajo"
-    if "concurso-oposicion" in n or "concurso oposicion" in n or "concurs-oposicio" in n or "concurs oposicio" in n:
+    if any(x in n for x in ("concurso-oposicion", "concurso oposicion", "concurs-oposicio", "concurs oposicio")):
         return "Concurso-oposición"
     if "oposicion" in n or "oposicio" in n:
         return "Oposición"
@@ -139,6 +141,26 @@ def _incluido(titulo: str) -> bool:
     if any(_sin(x) in n for x in EXCLUIDOS):
         return False
     return any(_sin(x) in n for x in INCLUIDOS)
+
+
+def _es_convocatoria_base(titulo: str, texto: str) -> bool:
+    n = _sin(titulo + " " + texto)
+    if any(x in n for x in (
+        "designacion de miembros", "designacion del organo", "designacion del tribunal",
+        "composicion del organo", "relacion provisional", "relacion definitiva",
+        "lista provisional", "lista definitiva", "fecha de examen", "calificaciones",
+        "resultado", "nombramiento",
+    )):
+        return False
+    return any(x in n for x in (
+        "aprobacion de las bases", "aprobacion de bases", "bases que han de regir",
+        "bases especificas", "convocatoria para la seleccion", "convocatoria del concurso",
+        "convocatoria de la oposicion", "convocatoria del proceso selectivo",
+    ))
+
+
+def _tipo_publicacion(titulo: str, texto: str) -> str:
+    return "CONVOCATORIA" if _es_convocatoria_base(titulo, texto) else "BOP"
 
 
 def _extraer_metadatos(a: Any) -> tuple[str | None, date | None]:
@@ -178,8 +200,7 @@ def diagnosticar_bop(client: httpx.Client) -> dict[str, Any]:
     candidatos = []
     for a in anchors:
         titulo = _norm(a.get_text(" ", strip=True))
-        n = _sin(titulo)
-        if not titulo or "anunci" not in n:
+        if not titulo or "anunci" not in _sin(titulo):
             continue
         candidatos.append(_diagnostico_candidato(a))
         if len(candidatos) >= 20:
@@ -238,9 +259,8 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
             if not html:
                 continue
             for anuncio in _extraer_anuncios_pagina(html):
-                registro = anuncio["registro"]
-                if registro not in vistos:
-                    vistos.add(registro)
+                if anuncio["registro"] not in vistos:
+                    vistos.add(anuncio["registro"])
                     resultados.append(anuncio)
     resultados.sort(key=lambda x: (x["fecha_publicacion"] or date.min, x["registro"]))
     return resultados
@@ -279,38 +299,68 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
                     texto = _obtener_texto(client, anuncio["url"])
                     contenido = titulo + " " + texto
                     estable = _identificador_estable(titulo, texto)
+                    tipo_publicacion = _tipo_publicacion(titulo, texto)
+                    es_base = tipo_publicacion == "CONVOCATORIA"
                     anio = _anio_convocatoria(contenido)
                     fecha_convocatoria = _fecha_convocatoria(contenido)
                     grupo, subgrupo = _grupo_subgrupo(contenido)
                     plazas = _plazas(contenido)
                     ultima = datetime.combine(fecha, datetime.min.time(), tzinfo=timezone.utc) if fecha else None
-                    valores = (titulo, grupo, subgrupo, _tipo(titulo), _turno(contenido), plazas, "EN_SEGUIMIENTO", anio, fecha_convocatoria)
-                    cursor.execute("SELECT id, denominacion, grupo, subgrupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_convocatoria FROM procesos WHERE identificador_estable=%s", (estable,))
+
+                    cursor.execute(
+                        "SELECT id, denominacion, grupo, subgrupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_convocatoria, datos_json FROM procesos WHERE identificador_estable=%s",
+                        (estable,),
+                    )
                     existente = cursor.fetchone()
-                    campos = ("denominacion", "grupo", "subgrupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_convocatoria")
+
                     if existente:
                         proceso_id = existente[0]
-                        for i, campo in enumerate(campos, 1):
-                            if existente[i] != valores[i - 1]:
-                                cursor.execute("INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen) VALUES (%s,%s,%s,%s,%s,%s)", (proceso_id, "ACTUALIZACION", campo, str(existente[i]) if existente[i] is not None else None, str(valores[i - 1]) if valores[i - 1] is not None else None, f"Cambio en {campo}: {existente[i]!r} -> {valores[i - 1]!r}"))
-                                stats["cambios"] += 1
-                        cursor.execute("UPDATE procesos SET denominacion=%s,grupo=%s,subgrupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,datos_json=%s,updated_at=NOW() WHERE id=%s", (*valores[:8], valores[8], ultima, FUENTE_ID, Jsonb({"registro": registro, "url": anuncio["url"]}), proceso_id))
+                        if es_base:
+                            nuevos = (titulo, grupo, subgrupo, _tipo(contenido), _turno(contenido), plazas, "EN_CURSO", anio, fecha_convocatoria)
+                            campos = ("denominacion", "grupo", "subgrupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_convocatoria")
+                            for i, campo in enumerate(campos, 1):
+                                if existente[i] != nuevos[i - 1] and nuevos[i - 1] is not None:
+                                    cursor.execute(
+                                        "INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,TRUE)",
+                                        (proceso_id, "ACTUALIZACION", campo, str(existente[i]) if existente[i] is not None else None, str(nuevos[i - 1]), f"Actualización de la convocatoria: {campo}"),
+                                    )
+                                    stats["cambios"] += 1
+                            cursor.execute(
+                                "UPDATE procesos SET denominacion=%s,grupo=COALESCE(%s,grupo),subgrupo=COALESCE(%s,subgrupo),tipo_proceso=%s,turno=COALESCE(%s,turno),plazas=COALESCE(%s,plazas),estado=%s,anio_convocatoria=COALESCE(%s,anio_convocatoria),fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,datos_json=%s,updated_at=NOW() WHERE id=%s",
+                                (nuevos[0], nuevos[1], nuevos[2], nuevos[3], nuevos[4], nuevos[5], nuevos[6], nuevos[7], nuevos[8], ultima, FUENTE_ID, Jsonb({**(existente[10] or {}), "url_convocatoria": anuncio["url"], "registro_convocatoria": registro}), proceso_id),
+                            )
+                        else:
+                            cursor.execute("UPDATE procesos SET ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,updated_at=NOW() WHERE id=%s", (ultima, FUENTE_ID, proceso_id))
                     else:
-                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,es_oportunidad,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s) RETURNING id", (ORGANISMO_ID, registro, estable, titulo, grupo, subgrupo, _tipo(titulo), _turno(contenido), plazas, "EN_SEGUIMIENTO", anio, fecha_convocatoria, ultima, FUENTE_ID, Jsonb({"registro": registro, "url": anuncio["url"]})))
+                        cursor.execute(
+                            "INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,es_oportunidad,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s) RETURNING id",
+                            (ORGANISMO_ID, registro, estable, titulo, grupo, subgrupo, _tipo(contenido), _turno(contenido), plazas, "EN_CURSO", anio, fecha_convocatoria, ultima, FUENTE_ID, Jsonb({"registro": registro, "url_ultima_publicacion": anuncio["url"], "convocatoria_identificada": _convocatoria(contenido)})),
+                        )
                         proceso_id = cursor.fetchone()[0]
                         stats["procesos"] += 1
+
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
-                    cursor.execute("SELECT 1 FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
-                    if cursor.fetchone() is None:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (proceso_id, FUENTE_ID, registro, "BOP", titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"]})))
+                    cursor.execute("SELECT id FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
+                    publicacion = cursor.fetchone()
+                    if publicacion is None:
+                        cursor.execute(
+                            "INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                            (proceso_id, FUENTE_ID, registro, tipo_publicacion, titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"], "es_convocatoria_base": es_base})),
+                        )
+                        publicacion_id = cursor.fetchone()[0]
                         stats["publicaciones"] += 1
-                    stats["anuncios"].append({"registro": registro, "titulo": titulo, "fecha_publicacion": fecha.isoformat() if fecha else None, "proceso_id": proceso_id, "identificador_estable": estable})
+                        if not es_base:
+                            cursor.execute(
+                                "INSERT INTO cambios (proceso_id,publicacion_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,%s,TRUE)",
+                                (proceso_id, publicacion_id, "PUBLICACION", "publicacion", None, registro, f"Nueva publicación oficial: {titulo}"),
+                            )
+                            stats["cambios"] += 1
+                    stats["anuncios"].append({"registro": registro, "titulo": titulo, "fecha_publicacion": fecha.isoformat() if fecha else None, "proceso_id": proceso_id, "identificador_estable": estable, "tipo_publicacion": tipo_publicacion})
             connection.commit()
     return stats
 
 
 def limpiar_anuncios_no_empleo() -> dict[str, int]:
-    """Elimina únicamente los tres registros de prueba que eran provisión/nombramiento."""
     registros = ("2026/10924", "2026/10931", "2026/11054")
     with get_connection() as connection:
         with connection.cursor() as cursor:
