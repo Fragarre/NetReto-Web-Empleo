@@ -63,10 +63,14 @@ SELECT_FIELDS = """
              AND pub.url IS NOT NULL
              AND TRIM(pub.url) <> ''
            ORDER BY
+             -- La publicación que representa las bases/convocatoria es la
+             -- fuente oficial de la ficha. Nunca debe ganarle un anuncio
+             -- posterior solo porque su título también contiene "convocatoria".
              CASE
-               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 0
-               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 1
-               ELSE 2
+               WHEN UPPER(TRIM(COALESCE(pub.tipo, ''))) IN ('CONVOCATORIA', 'BASES') THEN 0
+               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 1
+               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 2
+               ELSE 3
              END,
              pub.fecha_publicacion ASC NULLS LAST,
              pub.id ASC
