@@ -22,7 +22,7 @@ ORGANISMO_ID = 4
 FUENTE_ID = 4
 
 EXCLUIDOS = (
-    "promocion interna", "promoción interna", "libre designacion", "libre designación",
+    "libre designacion", "libre designación",
     "concurso general de meritos", "concurso general de méritos", "concurso de traslados",
     "comision de servicios", "comisión de servicios",
 )
@@ -42,7 +42,10 @@ def _fecha(value: str | None) -> date | None:
     for patron in (r"(\d{1,2})/(\d{1,2})/(\d{4})", r"(\d{1,2})-(\d{1,2})-(\d{4})"):
         m = re.search(patron, value)
         if m:
-            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            try:
+                return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            except ValueError:
+                return None
     return None
 
 
@@ -67,8 +70,6 @@ def _int(value: str | None) -> int | None:
 
 
 def _parse_rss(xml: str | bytes) -> list[tuple[str, str, date | None]]:
-    # Parseamos los bytes originales para respetar la codificación declarada
-    # por el XML y evitar textos mojibake como "DiputaciÃ³n".
     root = ET.fromstring(xml)
     resultado: list[tuple[str, str, date | None]] = []
     for item in root.findall(".//item"):
@@ -91,7 +92,7 @@ def _codigo(url: str, title: str) -> str:
 
 def _campo(texto: str, etiqueta: str, siguiente: str | None = None) -> str | None:
     if siguiente:
-        patron = rf"{re.escape(etiqueta)}\s*:?\s*(.*?)(?=\s+{re.escape(siguiente)}\s*:|$)"
+        patron = rf"{re.escape(etiqueta)}\s*:?\s*(.*?)(?=\s+{re.escape(siguiente)}\s*:?(?:\s|$)|$)"
     else:
         patron = rf"{re.escape(etiqueta)}\s*:?\s*(.*?)(?=\s+(?:Observaciones|Seguimiento de la oposici[oó]n)\b|$)"
     m = re.search(patron, texto, re.I)
@@ -101,6 +102,7 @@ def _campo(texto: str, etiqueta: str, siguiente: str | None = None) -> str | Non
 def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     texto = _norm(soup.get_text(" ", strip=True))
+
     plaza = _campo(texto, "Plaza", "Entidad") or _norm(rss_title)
     entidad = _campo(texto, "Entidad", "Vacantes")
     vacantes = _int(_campo(texto, "Vacantes", "Tipo contrato"))
@@ -110,27 +112,20 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     observaciones = _campo(texto, "Observaciones")
     codigo = _codigo(url, rss_title)
 
-    titulo = plaza
-    if entidad and entidad != "Diputación Provincial de Alicante":
-        titulo = f"{plaza} — {entidad}"
+    titulo = plaza or _norm(rss_title) or f"Proceso Diputación Alicante {codigo}"
 
-    normal = _sin_acentos(texto)
-    tiene_turno_libre = "turno libre" in normal or "oposicion libre" in normal
-    tiene_promocion_interna = "promocion interna" in normal
-    turno = None
-    if tiene_turno_libre:
-        turno = "TURNO_LIBRE"
-    elif tiene_promocion_interna:
-        turno = "PROMOCION_INTERNA"
-
-    sistema = tipo_prueba.upper() if tipo_prueba else None
+    # La condición de oportunidad se determina sobre los datos descriptivos
+    # del proceso, no sobre toda la tabla histórica de hitos. La tabla puede
+    # mencionar promoción interna en un ejercicio de un proceso mixto.
+    texto_clave = _sin_acentos(" ".join(filter(None, (rss_title, plaza, observaciones))))
+    tiene_turno_libre = "turno libre" in texto_clave or "oposicion libre" in texto_clave
+    tiene_promocion_interna = "promocion interna" in texto_clave
+    turno = "TURNO_LIBRE" if tiene_turno_libre else ("PROMOCION_INTERNA" if tiene_promocion_interna else None)
     es_exclusivo_interno = tiene_promocion_interna and not tiene_turno_libre
-    es_oportunidad = not es_exclusivo_interno and not any(
-        _sin_acentos(x) in normal for x in EXCLUIDOS if "promocion interna" not in _sin_acentos(x)
-    )
+    es_oportunidad = not es_exclusivo_interno and not any(_sin_acentos(x) in texto_clave for x in EXCLUIDOS)
 
     anio = None
-    m_anio = re.search(r"convocatoria\s+(?:\w+\s+)?(20\d{2})", _sin_acentos(rss_title + " " + texto), re.I)
+    m_anio = re.search(r"convocatoria\s+(?:\w+\s+)?(20\d{2})", _sin_acentos(rss_title), re.I)
     if m_anio:
         anio = int(m_anio.group(1))
 
@@ -138,10 +133,10 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     return {
         "codigo_externo": codigo,
         "identificador_estable": f"DALI:{codigo}",
-        "denominacion": titulo or f"Proceso Diputación Alicante {codigo}",
+        "denominacion": titulo,
         "grupo": None,
         "tipo_proceso": tipo_prueba,
-        "sistema_selectivo": sistema,
+        "sistema_selectivo": tipo_prueba.upper() if tipo_prueba else None,
         "turno": turno,
         "plazas": vacantes,
         "estado": "EN_CURSO",
@@ -207,9 +202,12 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
     return int(row[0]), bool(row[1])
 
 
-def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
+def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
     headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
-    estadisticas = {"descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "errores": 0}
+    estadisticas: dict[str, Any] = {
+        "descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "errores": 0,
+        "errores_detalle": [],
+    }
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         rss = client.get(RSS_URL)
         rss.raise_for_status()
@@ -225,26 +223,32 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
                         proceso_id, inserted = _upsert(cursor, datos)
                         if inserted:
                             estadisticas["procesos"] += 1
+
                         pub = datos["publicacion"]
                         referencia = pub["referencia"]
                         fecha_publicacion = rss_date or date.today()
+
                         cursor.execute(
-                            """
-                            INSERT INTO publicaciones (
-                                proceso_id, fuente_id, referencia, tipo, titulo,
-                                fecha_publicacion, url, contenido_hash, contenido_texto, datos_json
-                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                            ON CONFLICT (fuente_id, referencia, url) DO NOTHING
-                            RETURNING id
-                            """,
-                            (
-                                proceso_id, FUENTE_ID, referencia, pub["tipo"], pub["titulo"],
-                                fecha_publicacion, pub["url"], pub["contenido_hash"],
-                                pub["contenido_texto"], Jsonb(pub["datos_json"]),
-                            ),
+                            "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s AND url=%s LIMIT 1",
+                            (FUENTE_ID, referencia, pub["url"]),
                         )
                         publicacion = cursor.fetchone()
-                        if publicacion:
+                        if publicacion is None:
+                            cursor.execute(
+                                """
+                                INSERT INTO publicaciones (
+                                    proceso_id, fuente_id, referencia, tipo, titulo,
+                                    fecha_publicacion, url, contenido_hash, contenido_texto, datos_json
+                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                RETURNING id
+                                """,
+                                (
+                                    proceso_id, FUENTE_ID, referencia, pub["tipo"], pub["titulo"],
+                                    fecha_publicacion, pub["url"], pub["contenido_hash"],
+                                    pub["contenido_texto"], Jsonb(pub["datos_json"]),
+                                ),
+                            )
+                            publicacion = cursor.fetchone()
                             estadisticas["publicaciones"] += 1
                             cursor.execute(
                                 """
@@ -256,8 +260,20 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
                                 (proceso_id, publicacion[0], referencia, f"Nueva publicación oficial: {pub['titulo']}"),
                             )
                             estadisticas["cambios"] += 1
-                    except Exception:
+                    except Exception as exc:
                         estadisticas["errores"] += 1
+                        errores = estadisticas["errores_detalle"]
+                        if len(errores) < 10:
+                            errores.append({
+                                "codigo": _codigo(url, title),
+                                "url": url,
+                                "error": f"{type(exc).__name__}: {exc}",
+                            })
+                        connection.rollback()
+                        # El rollback invalida el cursor actual; abrimos uno nuevo
+                        # para continuar con el siguiente elemento.
+                        cursor.close()
+                        cursor = connection.cursor()
             connection.commit()
     return estadisticas
 
