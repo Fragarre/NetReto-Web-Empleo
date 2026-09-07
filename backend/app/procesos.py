@@ -12,6 +12,7 @@ TIPOS_EXCLUIDOS = (
     "Comisiones de servicio",
     "Difícil cobertura",
     "Anuncio difícil cobertura",
+    "Acto único telemático",
 )
 
 PATRONES_TITULO_EXCLUIDOS = (
@@ -25,6 +26,10 @@ PATRONES_TITULO_EXCLUIDOS = (
     "libre designacion",
     "comisiones de servicio",
     "comissions de servei",
+    "acto único telemático",
+    "acto unico telematico",
+    "acte unic telematic",
+    "acte únic telemàtic",
 )
 
 
