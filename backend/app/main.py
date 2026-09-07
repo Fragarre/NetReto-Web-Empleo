@@ -10,6 +10,7 @@ from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
+from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -309,3 +310,24 @@ def cleanup_bop_valencia_normalizar_prueba(x_import_secret: str | None = Header(
         return normalizar_bop_prueba()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en normalización BOP Valencia: {exc}") from exc
+
+
+@app.get("/admin/debug/diputacion-alicante")
+def debug_diputacion_alicante(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return diagnosticar_diputacion_alicante()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en diagnóstico Diputación Alicante: {exc}") from exc
+
+
+@app.post("/admin/import/diputacion-alicante")
+def importar_diputacion_alicante_endpoint(
+    x_import_secret: str | None = Header(default=None),
+    max_detalles: int = Query(default=100, ge=1, le=300),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return importar_diputacion_alicante(max_detalles=max_detalles)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación Diputación Alicante: {exc}") from exc
