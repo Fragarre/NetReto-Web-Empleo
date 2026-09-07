@@ -11,6 +11,7 @@ from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_pru
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
 from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
+from .ayuntamiento_alicante import diagnosticar_ayuntamiento_alicante, importar_ayuntamiento_alicante
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -331,3 +332,24 @@ def importar_diputacion_alicante_endpoint(
         return importar_diputacion_alicante(max_detalles=max_detalles)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación Diputación Alicante: {exc}") from exc
+
+
+@app.get("/admin/debug/ayuntamiento-alicante")
+def debug_ayuntamiento_alicante(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return diagnosticar_ayuntamiento_alicante()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en diagnóstico Ayuntamiento Alicante: {exc}") from exc
+
+
+@app.post("/admin/import/ayuntamiento-alicante")
+def importar_ayuntamiento_alicante_endpoint(
+    x_import_secret: str | None = Header(default=None),
+    max_detalles: int = Query(default=150, ge=1, le=300),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return importar_ayuntamiento_alicante(max_detalles=max_detalles)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación Ayuntamiento Alicante: {exc}") from exc
