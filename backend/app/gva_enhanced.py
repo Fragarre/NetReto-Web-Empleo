@@ -29,6 +29,7 @@ PATRONES_BOLSA_NO_OPORTUNIDAD = (
     "consulta de baremo y posicion",
     "consulta de estados voluntarios",
     "consulta de estado voluntario",
+    "inscripcion en las listas extraordinarias",
 )
 
 
@@ -258,25 +259,3 @@ base._tipo_convocatoria = _tipo_convocatoria
 base._turno = _turno
 base._es_incluido = _es_incluido
 base.parsear_detalle = parsear_detalle
-importar_gva_robusto = base.importar_gva_robusto
-
-
-def limpiar_gva_navegacion() -> dict[str, int]:
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT id FROM procesos WHERE organismo_id=%s AND denominacion='Navegación' AND datos_json->>'organismo_detectado'='Navegación'",
-                (base.GVA_ORGANISMO_ID,),
-            )
-            ids = [row[0] for row in cursor.fetchall()]
-            if not ids:
-                connection.commit()
-                return {"procesos_eliminados": 0, "publicaciones_eliminadas": 0, "cambios_eliminados": 0}
-            cursor.execute("DELETE FROM cambios WHERE proceso_id=ANY(%s)", (ids,))
-            cambios = cursor.rowcount
-            cursor.execute("DELETE FROM publicaciones WHERE proceso_id=ANY(%s)", (ids,))
-            publicaciones = cursor.rowcount
-            cursor.execute("DELETE FROM procesos WHERE id=ANY(%s)", (ids,))
-            procesos = cursor.rowcount
-            connection.commit()
-    return {"procesos_eliminados": procesos, "publicaciones_eliminadas": publicaciones, "cambios_eliminados": cambios}
