@@ -287,11 +287,7 @@ def importar_bop_valencia_endpoint(
     _validar_import_secret(x_import_secret)
     try:
         resultado = importar_bop_valencia(historico=historico, dias=dias)
-        with get_connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("UPDATE procesos SET es_oportunidad=FALSE WHERE organismo_id=2")
-            connection.commit()
-        resultado["oportunidades_marcadas_no"] = True
+        resultado["oportunidades_marcadas"] = True
         return resultado
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia: {exc}") from exc
