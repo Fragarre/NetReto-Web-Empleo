@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from psycopg.types.json import Jsonb
 
 from .database import get_connection
 
@@ -199,7 +200,7 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
             ORGANISMO_ID, datos["codigo_externo"], datos["identificador_estable"], datos["denominacion"],
             datos["grupo"], datos["tipo_proceso"], datos["sistema_selectivo"], datos["turno"], datos["plazas"],
             datos["estado"], datos["es_oportunidad"], datos["anio_convocatoria"], datos["fecha_apertura"],
-            datos["fecha_cierre"], datos["ultima_publicacion_at"], FUENTE_ID, datos["datos_json"],
+            datos["fecha_cierre"], datos["ultima_publicacion_at"], FUENTE_ID, Jsonb(datos["datos_json"]),
         ),
     )
     row = cursor.fetchone()
@@ -239,7 +240,7 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, int]:
                             (
                                 proceso_id, FUENTE_ID, referencia, pub["tipo"], pub["titulo"],
                                 fecha_publicacion, pub["url"], pub["contenido_hash"],
-                                pub["contenido_texto"], pub["datos_json"],
+                                pub["contenido_texto"], Jsonb(pub["datos_json"]),
                             ),
                         )
                         publicacion = cursor.fetchone()
