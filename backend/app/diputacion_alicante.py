@@ -107,6 +107,66 @@ def _valor_detalle(valores: dict[str, str], etiqueta: str) -> str | None:
     return valores.get(_sin_acentos(etiqueta).rstrip(":"))
 
 
+def _seguimiento_hitos(soup: BeautifulSoup, codigo: str) -> list[dict[str, Any]]:
+    """Extrae los hitos oficiales de la tabla 'Seguimiento de la oposición'."""
+    marcador = None
+    for nodo in soup.find_all(string=re.compile(r"Seguimiento\s+de\s+la\s+oposici[oó]n", re.I)):
+        marcador = nodo.parent
+        break
+    if marcador is None:
+        return []
+
+    tabla = marcador.find_next("table")
+    if tabla is None:
+        return []
+
+    hitos: list[dict[str, Any]] = []
+    for tr in tabla.find_all("tr"):
+        celdas = tr.find_all(["th", "td"])
+        textos = [_norm(c.get_text(" ", strip=True)) for c in celdas]
+        if len(textos) < 2:
+            continue
+
+        fecha = next((_fecha(t) for t in textos if _fecha(t)), None)
+        if fecha is None:
+            continue
+
+        titulo = None
+        enlace = None
+        for celda, texto in zip(celdas, textos):
+            if not texto or _fecha(texto):
+                continue
+            a = celda.find("a", href=True)
+            if a and _norm(a.get_text(" ", strip=True)):
+                titulo = _norm(a.get_text(" ", strip=True))
+                enlace = urljoin(BASE_URL, a["href"])
+                break
+            if titulo is None or len(texto) > len(titulo):
+                titulo = texto
+
+        if not titulo:
+            continue
+
+        clave = f"{codigo}|{fecha.isoformat()}|{titulo}|{enlace or ''}"
+        contenido_hash = hashlib.sha256(clave.encode("utf-8")).hexdigest()
+        referencia = f"DALI:{codigo}:HITO:{fecha.isoformat()}:{contenido_hash[:16]}"
+        hitos.append({
+            "referencia": referencia,
+            "tipo": "SEGUIMIENTO",
+            "titulo": titulo,
+            "url": enlace,
+            "fecha_publicacion": fecha,
+            "contenido_hash": contenido_hash,
+            "contenido_texto": titulo,
+            "datos_json": {"codigo": codigo, "hito": True},
+        })
+
+    unicos: dict[str, dict[str, Any]] = {}
+    for hito in hitos:
+        unicos[hito["referencia"]] = hito
+    return list(unicos.values())
+
+
 def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     texto = _norm(soup.get_text(" ", strip=True))
@@ -168,6 +228,7 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
             "contenido_texto": texto,
             "datos_json": {"codigo": codigo},
         },
+        "seguimiento": _seguimiento_hitos(soup, codigo),
     }
 
 
@@ -208,6 +269,41 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
     return int(row[0]), bool(row[1])
 
 
+def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any]) -> bool:
+    cursor.execute(
+        "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s AND url=%s LIMIT 1",
+        (FUENTE_ID, pub["referencia"], pub["url"]),
+    )
+    if cursor.fetchone() is not None:
+        return False
+
+    cursor.execute(
+        """
+        INSERT INTO publicaciones (
+            proceso_id, fuente_id, referencia, tipo, titulo,
+            fecha_publicacion, url, contenido_hash, contenido_texto, datos_json
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        RETURNING id
+        """,
+        (
+            proceso_id, FUENTE_ID, pub["referencia"], pub["tipo"], pub["titulo"],
+            pub["fecha_publicacion"], pub["url"], pub["contenido_hash"],
+            pub["contenido_texto"], Jsonb(pub["datos_json"]),
+        ),
+    )
+    publicacion = cursor.fetchone()
+    cursor.execute(
+        """
+        INSERT INTO cambios (
+            proceso_id, publicacion_id, tipo, campo, valor_anterior,
+            valor_nuevo, resumen, significativo
+        ) VALUES (%s,%s,'PUBLICACION','publicacion',NULL,%s,%s,TRUE)
+        """,
+        (proceso_id, publicacion[0], pub["referencia"], f"Nueva publicación oficial: {pub['titulo']}"),
+    )
+    return True
+
+
 def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
     headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
     estadisticas: dict[str, Any] = {
@@ -229,41 +325,19 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
                         proceso_id, inserted = _upsert(cursor, datos)
                         if inserted:
                             estadisticas["procesos"] += 1
+
                         pub = datos["publicacion"]
-                        referencia = pub["referencia"]
-                        fecha_publicacion = rss_date or date.today()
-                        cursor.execute(
-                            "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s AND url=%s LIMIT 1",
-                            (FUENTE_ID, referencia, pub["url"]),
-                        )
-                        publicacion = cursor.fetchone()
-                        if publicacion is None:
-                            cursor.execute(
-                                """
-                                INSERT INTO publicaciones (
-                                    proceso_id, fuente_id, referencia, tipo, titulo,
-                                    fecha_publicacion, url, contenido_hash, contenido_texto, datos_json
-                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                                RETURNING id
-                                """,
-                                (
-                                    proceso_id, FUENTE_ID, referencia, pub["tipo"], pub["titulo"],
-                                    fecha_publicacion, pub["url"], pub["contenido_hash"],
-                                    pub["contenido_texto"], Jsonb(pub["datos_json"]),
-                                ),
-                            )
-                            publicacion = cursor.fetchone()
+                        if _insertar_publicacion(cursor, proceso_id, {
+                            **pub,
+                            "fecha_publicacion": rss_date or date.today(),
+                        }):
                             estadisticas["publicaciones"] += 1
-                            cursor.execute(
-                                """
-                                INSERT INTO cambios (
-                                    proceso_id, publicacion_id, tipo, campo, valor_anterior,
-                                    valor_nuevo, resumen, significativo
-                                ) VALUES (%s,%s,'PUBLICACION','publicacion',NULL,%s,%s,TRUE)
-                                """,
-                                (proceso_id, publicacion[0], referencia, f"Nueva publicación oficial: {pub['titulo']}"),
-                            )
                             estadisticas["cambios"] += 1
+
+                        for hito in datos["seguimiento"]:
+                            if _insertar_publicacion(cursor, proceso_id, hito):
+                                estadisticas["publicaciones"] += 1
+                                estadisticas["cambios"] += 1
                     except Exception as exc:
                         estadisticas["errores"] += 1
                         errores = estadisticas["errores_detalle"]
@@ -298,4 +372,3 @@ def diagnosticar_diputacion_alicante() -> dict[str, Any]:
             "rss_items": len(enlaces),
             "muestra": [{"titulo": t, "url": u, "fecha": d.isoformat() if d else None} for t, u, d in enlaces[:10]],
         }
-    
