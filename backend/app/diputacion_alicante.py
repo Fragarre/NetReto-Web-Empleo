@@ -108,23 +108,28 @@ def _valor_detalle(valores: dict[str, str], etiqueta: str) -> str | None:
 
 
 def _seguimiento_hitos(soup: BeautifulSoup, codigo: str) -> list[dict[str, Any]]:
-    """Extrae los hitos oficiales de la tabla 'Seguimiento de la oposición'."""
-    marcador = None
-    for nodo in soup.find_all(string=re.compile(r"Seguimiento\s+de\s+la\s+oposici[oó]n", re.I)):
-        marcador = nodo.parent
-        break
-    if marcador is None:
-        return []
+    """Extrae hitos buscando la tabla por sus cabeceras, sin depender de su posición HTML."""
+    tabla_objetivo = None
+    for tabla in soup.find_all("table"):
+        for tr in tabla.find_all("tr"):
+            textos = [_sin_acentos(_norm(c.get_text(" ", strip=True))) for c in tr.find_all(["th", "td"])]
+            unidos = " | ".join(textos)
+            if "hito / documento" in unidos and "fecha publicacion" in unidos:
+                tabla_objetivo = tabla
+                break
+        if tabla_objetivo is not None:
+            break
 
-    tabla = marcador.find_next("table")
-    if tabla is None:
+    if tabla_objetivo is None:
         return []
 
     hitos: list[dict[str, Any]] = []
-    for tr in tabla.find_all("tr"):
+    for tr in tabla_objetivo.find_all("tr"):
         celdas = tr.find_all(["th", "td"])
         textos = [_norm(c.get_text(" ", strip=True)) for c in celdas]
         if len(textos) < 2:
+            continue
+        if "hito / documento" in _sin_acentos(" | ".join(textos)):
             continue
 
         fecha = next((_fecha(t) for t in textos if _fecha(t)), None)
@@ -271,8 +276,8 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
 
 def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any]) -> bool:
     cursor.execute(
-        "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s AND url=%s LIMIT 1",
-        (FUENTE_ID, pub["referencia"], pub["url"]),
+        "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
+        (FUENTE_ID, pub["referencia"]),
     )
     if cursor.fetchone() is not None:
         return False
