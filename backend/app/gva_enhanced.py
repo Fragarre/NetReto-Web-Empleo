@@ -13,18 +13,15 @@ _BASE_PARSEAR_DETALLE = base.parsear_detalle
 
 TIPOS_INCLUIDOS = {
     "oposicion",
-    "bolsa de trabajo",
-    "contratacion laboral temporal",
-    "contratacion laboral indefinida",
-    "proceso de estabilizacion",
-    "acto unico telematico",
-    "acte unic telematic",
     "concurso-oposicion",
+    "concurso oposicion",
+    "bolsa de trabajo",
+    "bolsa de empleo",
+    "proceso selectivo",
+    "seleccion",
+    "selección",
 }
 
-# Algunas páginas de consulta de listas de Sanidad aparecen clasificadas
-# técnicamente como "Bolsa de trabajo", pero no son una oportunidad de
-# acceso o inscripción para el opositor.
 PATRONES_BOLSA_NO_OPORTUNIDAD = (
     "consulta de baremo y posicion",
     "consulta de estados voluntarios",
@@ -33,210 +30,56 @@ PATRONES_BOLSA_NO_OPORTUNIDAD = (
 )
 
 
-def _tipo_convocatoria(texto: str) -> str | None:
-    normal = base._sin_acentos(texto)
-    m = re.search(r"convocatoria\s+(.{1,120}?)(?:\s+prueba\s+|\s+grupo\s+|\s+titulacion\s+|\s+enlace a organismo\s+)", normal, re.I)
-    if not m:
-        return None
-    valor = base._normalizar(m.group(1))
-    if any(patron in valor for patron in PATRONES_BOLSA_NO_OPORTUNIDAD):
+def _sin(s: str) -> str:
+    return base._sin_acentos(s or "")
+
+
+def _tipo_convocatoria(titulo: str) -> str:
+    n = _sin(titulo).lower()
+    if any(p in n for p in PATRONES_BOLSA_NO_OPORTUNIDAD):
         return "Consulta administrativa"
-    patrones = (
-        ("bolsa de trabajo", "Bolsa de trabajo"),
-        ("oposicion", "Oposición"),
-        ("promocion interna", "Promoción interna"),
-        ("contratacion laboral temporal", "Contratación laboral temporal"),
-        ("contratacion laboral indefinida", "Contratación laboral indefinida"),
-        ("proceso de estabilizacion", "Proceso de estabilización"),
-        ("acto unico telematico", "Acto único telemático"),
-        ("acte unic telematic", "Acto único telemático"),
-        ("anuncio dificil cobertura", "Anuncio difícil cobertura"),
-        ("concurso general de meritos", "Concurso general de méritos"),
-        ("concurso-oposicion", "Concurso-oposición"),
-        ("concurso", "Concurso"),
-        ("cobertura interina", "Cobertura interina"),
-        ("comision de servicio", "Comisión de servicio"),
-        ("libre designacion", "Libre designación"),
-        ("seleccion personal directivo", "Selección personal directivo"),
-        ("procesos especiales", "Procesos especiales"),
-        ("otros", "Otros"),
+    return base._tipo_convocatoria(titulo)
+
+
+def _turno(titulo: str) -> str | None:
+    return base._turno(titulo)
+
+
+def _es_incluido(titulo: str) -> bool:
+    n = _sin(titulo).lower()
+    if any(p in n for p in PATRONES_BOLSA_NO_OPORTUNIDAD):
+        return False
+    return base._es_incluido(titulo)
+
+
+def _resolver_organismo(proceso: dict[str, Any]) -> tuple[int | None, str | None, str | None]:
+    texto = " ".join(
+        str(proceso.get(k) or "")
+        for k in ("denominacion", "organismo", "organismo_texto", "datos_json")
     )
-    for patron, nombre in patrones:
-        if patron in valor:
-            return nombre
-    return base._normalizar(m.group(1))
-
-
-def _turno(texto: str) -> str | None:
-    normal = base._sin_acentos(texto)
-    candidatos = []
-    for patron, valor in (
-        ("promocion interna", "PROMOCION_INTERNA"),
-        ("turno libre", "TURNO_LIBRE"),
-        ("discapacidad intelectual", "DISCAPACIDAD_INTELECTUAL"),
-        ("discapacidad", "DISCAPACIDAD"),
-    ):
-        posicion = normal.find(patron)
-        if posicion >= 0:
-            candidatos.append((posicion, valor))
-    return min(candidatos, key=lambda x: x[0])[1] if candidatos else None
-
-
-def _es_incluido(tipo: str | None) -> bool:
-    normal = base._sin_acentos(tipo or "").strip()
-    return normal in TIPOS_INCLUIDOS
-
-
-def _extraer_etapa_actual(texto: str) -> tuple[str | None, str]:
-    m = re.search(r"\bEtapa actual\s*:\s*(.+?)(?=\s+(?:C[oó]di?g?o|Codi)\s+SIA\b)", texto, re.I)
-    if not m:
-        return None, ""
-    etapa = base._normalizar(m.group(1))
-    bloque = texto[m.start():]
-    fin = re.search(r"\b(?:Informaci[oó]n|Informació)\s+b[aá]sica\b", bloque, re.I)
-    if fin:
-        bloque = bloque[:fin.start()]
-    return etapa, base._normalizar(bloque)
-
-
-def _fecha_de_etapa(bloque: str):
-    patrones = (
-        r"Fecha publicación\s*:?\s*(\d{2}[-/]\d{2}[-/]\d{4})",
-        r"Data publicació\s*:?\s*(\d{2}[-/]\d{2}[-/]\d{4})",
-    )
-    for patron in patrones:
-        m = re.search(patron, bloque, re.I)
-        if m:
-            return base._fecha(m.group(1))
-    return None
-
-
-def _estado_etapa_actual(bloque: str) -> str | None:
-    normal = base._sin_acentos(bloque)
-    if re.search(r"\b(plazo|termini)\s+(?:est[aá]|es )?abierto\b", normal) or "termini obert" in normal or "plazo abierto" in normal:
-        return "ABIERTO"
-    if "plazo cerrado" in normal or "plazo tancado" in normal or "termini tancat" in normal or "termini cerrat" in normal:
-        return "CERRADO"
-    return None
-
-
-def _extraer_organismo(texto: str) -> str | None:
-    normal = base._normalizar(texto)
-    m_etapa = re.search(r"\bEtapa actual\s*:", normal, re.I)
-    if not m_etapa:
-        return None
-    previo = normal[:m_etapa.start()]
-    m_atras = list(re.finditer(r"\bAtrás\b", previo, re.I))
-    bloque = previo[m_atras[-1].end():] if m_atras else previo[-2500:]
-    patrones = (
-        r"Conselleria\s+[^:]{1,180}",
-        r"Labora\s+[^:]{1,180}",
-        r"Ag[eè]ncia\s+[^:]{1,180}",
-        r"Institut\s+[^:]{1,180}",
-        r"Instituto\s+[^:]{1,180}",
-        r"Turisme Comunitat Valenciana",
-        r"Generalitat Valenciana",
-    )
-    candidatos = []
-    for patron in patrones:
-        for m in re.finditer(patron, bloque, re.I):
-            candidatos.append((m.start(), base._normalizar(m.group(0))))
-    return max(candidatos, key=lambda x: x[0])[1] if candidatos else None
-
-
-def _extraer_enlace_organismo_html(html: str) -> str | None:
-    if not html:
-        return None
-    soup = BeautifulSoup(html, "html.parser")
-    for nodo in soup.find_all(string=re.compile(r"Enlace a organismo", re.I)):
-        actual = nodo.parent
-        if actual is None:
-            continue
-        candidatos = []
-        if actual.name == "a":
-            candidatos.append(actual)
-        candidatos.extend(actual.find_all("a", href=True))
-        if actual.parent is not None:
-            candidatos.extend(actual.parent.find_all("a", href=True))
-        for enlace in candidatos:
-            href = (enlace.get("href") or "").strip()
-            if href and not href.startswith("#"):
-                return href
-    return None
-
-
-def _es_externo_por_texto(titulo: str, organismo_texto: str | None) -> bool:
-    evidencia = base._sin_acentos(f"{titulo} {organismo_texto or ''}")
-    externos = (
-        "administracion de justicia",
-        "tramitacion procesal",
-        "gestion procesal",
-        "auxilio judicial",
-        "orden pjc/",
-        "ministerio de justicia",
-        "secretaria de estado de justicia",
-        "istecdigital",
-        "iislafe",
-        "instituto de investigacion sanitaria la fe",
-    )
-    return any(marca in evidencia for marca in externos)
-
-
-def _es_generalitat_texto(organismo_texto: str | None) -> bool:
-    normal = base._sin_acentos(organismo_texto or "")
-    return bool(normal) and (
-        normal.startswith("conselleria ")
-        or "labora" in normal
-        or "agencia valenciana" in normal
-        or "institut valencia" in normal
-        or "instituto valenciano" in normal
-        or "turisme comunitat valenciana" in normal
-        or "generalitat valenciana" in normal
-    )
-
-
-def _host(url: str | None) -> str:
-    try:
-        candidata = (url or "").strip()
-        if not candidata:
-            return ""
-        if "://" not in candidata:
-            candidata = f"https://{candidata}"
-        return urlparse(candidata).netloc.lower().split(":", 1)[0].rstrip(".")
-    except Exception:
-        return ""
-
-
-def _resolver_organismo(titulo: str, organismo_texto: str | None, organismo_enlace: str | None) -> tuple[int | None, str]:
-    if _es_externo_por_texto(titulo, organismo_texto):
-        return None, "organismo_externo"
-    if _es_generalitat_texto(organismo_texto):
-        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
-    host = _host(organismo_enlace)
-    if host == "cjusticia.gva.es" or host.endswith(".istecdigital.es") or host.endswith(".iislafe.es"):
-        return None, "organismo_externo"
-    if host == "gva.es" or host.endswith(".gva.es"):
-        return base.GVA_ORGANISMO_ID, "generalitat_valenciana"
-    if organismo_texto:
-        return None, "organismo_no_pertenece_a_generalitat"
+    n = _sin(texto).lower()
+    if "generalitat valenciana" in n or "conselleria" in n:
+        return base.GVA_ORGANISMO_ID, "generalitat_valenciana", None
+    organismo_enlace = proceso.get("organismo_enlace")
     if organismo_enlace:
-        return None, "organismo_externo"
-    return None, "organismo_no_identificado"
+        host = urlparse(str(organismo_enlace)).netloc.lower()
+        if host.endswith("gva.es"):
+            return base.GVA_ORGANISMO_ID, "generalitat_valenciana", organismo_enlace
+    return base.GVA_ORGANISMO_ID, "generalitat_valenciana", organismo_enlace
 
 
 def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     proceso = _BASE_PARSEAR_DETALLE(url, html, id_emp)
-    texto = proceso["publicacion"]["contenido_texto"]
-    titulo = proceso["denominacion"]
-    organismo_texto = _extraer_organismo(texto)
-    organismo_enlace = _extraer_enlace_organismo_html(html)
-    organismo_id, motivo = _resolver_organismo(titulo, organismo_texto, organismo_enlace)
-    etapa_actual, bloque_etapa = _extraer_etapa_actual(texto)
-    fecha_etapa = _fecha_de_etapa(bloque_etapa)
-    estado_etapa = _estado_etapa_actual(bloque_etapa)
+    titulo = str(proceso.get("denominacion") or "")
+    proceso["tipo_proceso"] = _tipo_convocatoria(titulo)
+    proceso["turno"] = _turno(titulo)
 
-    proceso["tipo_proceso"] = _tipo_convocatoria(texto) or proceso.get("tipo_proceso")
-    proceso["turno"] = _turno(titulo) or _turno(texto)
+    organismo_id, motivo, organismo_enlace = _resolver_organismo(proceso)
+    organismo_texto = str(proceso.get("organismo") or proceso.get("datos_json", {}).get("organismo_detectado") or "")
+    estado_etapa = proceso.get("estado")
+    etapa_actual = proceso.get("etapa_actual")
+    fecha_etapa = proceso.get("fecha_etapa")
+
     proceso["organismo_id"] = organismo_id
     if estado_etapa:
         proceso["estado"] = estado_etapa
@@ -259,3 +102,25 @@ base._tipo_convocatoria = _tipo_convocatoria
 base._turno = _turno
 base._es_incluido = _es_incluido
 base.parsear_detalle = parsear_detalle
+importar_gva_robusto = base.importar_gva_robusto
+
+
+def limpiar_gva_navegacion() -> dict[str, int]:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM procesos WHERE organismo_id=%s AND denominacion='Navegación' AND datos_json->>'organismo_detectado'='Navegación'",
+                (base.GVA_ORGANISMO_ID,),
+            )
+            ids = [row[0] for row in cursor.fetchall()]
+            if not ids:
+                connection.commit()
+                return {"procesos_eliminados": 0, "publicaciones_eliminadas": 0, "cambios_eliminados": 0}
+            cursor.execute("DELETE FROM cambios WHERE proceso_id=ANY(%s)", (ids,))
+            cambios = cursor.rowcount
+            cursor.execute("DELETE FROM publicaciones WHERE proceso_id=ANY(%s)", (ids,))
+            publicaciones = cursor.rowcount
+            cursor.execute("DELETE FROM procesos WHERE id=ANY(%s)", (ids,))
+            procesos = cursor.rowcount
+            connection.commit()
+    return {"procesos_eliminados": procesos, "publicaciones_eliminadas": publicaciones, "cambios_eliminados": cambios}
