@@ -1,5 +1,6 @@
 from typing import Any
 from uuid import UUID
+from datetime import datetime
 
 from .database import get_connection
 
@@ -176,6 +177,59 @@ def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]
             rows = cursor.fetchall()
             columns = [description.name for description in cursor.description]
     return [dict(zip(columns, row)) for row in rows]
+
+
+def estado_novedades_usuario(user_id: UUID) -> dict[str, Any]:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT ultima_novedad_vista_at, updated_at
+                FROM seguimiento_estado_usuario
+                WHERE user_id = %s
+                """,
+                (str(user_id),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return {"ultima_novedad_vista_at": None, "updated_at": None}
+            return {
+                "ultima_novedad_vista_at": row[0],
+                "updated_at": row[1],
+            }
+
+
+def marcar_novedades_vistas(user_id: UUID, hasta: datetime | None) -> dict[str, Any]:
+    """Guarda hasta qué instante de novedades ha visto el usuario.
+
+    El valor solo avanza; una petición antigua no puede hacer retroceder el estado.
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO seguimiento_estado_usuario
+                    (user_id, ultima_novedad_vista_at, updated_at)
+                VALUES (%s, %s, now())
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    ultima_novedad_vista_at = CASE
+                        WHEN seguimiento_estado_usuario.ultima_novedad_vista_at IS NULL THEN EXCLUDED.ultima_novedad_vista_at
+                        WHEN EXCLUDED.ultima_novedad_vista_at IS NULL THEN seguimiento_estado_usuario.ultima_novedad_vista_at
+                        WHEN EXCLUDED.ultima_novedad_vista_at > seguimiento_estado_usuario.ultima_novedad_vista_at THEN EXCLUDED.ultima_novedad_vista_at
+                        ELSE seguimiento_estado_usuario.ultima_novedad_vista_at
+                    END,
+                    updated_at = now()
+                RETURNING ultima_novedad_vista_at, updated_at
+                """,
+                (str(user_id), hasta),
+            )
+            row = cursor.fetchone()
+            connection.commit()
+    return {
+        "ultima_novedad_vista_at": row[0],
+        "updated_at": row[1],
+    }
 
 
 def preparar_notificaciones() -> dict[str, Any]:
