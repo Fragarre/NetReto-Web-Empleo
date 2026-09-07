@@ -21,6 +21,8 @@ from .seguimiento import (
     suscribirse,
     cancelar_suscripcion,
     cambios_usuario,
+    estado_novedades_usuario,
+    marcar_novedades_vistas,
 )
 from .database import get_connection
 
@@ -161,6 +163,30 @@ def seguimiento_cambios(
     usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
 ) -> list[dict[str, Any]]:
     return cambios_usuario(usuario.id, limite=limite)
+
+
+@app.get("/seguimiento/estado")
+def seguimiento_estado(
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
+    return estado_novedades_usuario(usuario.id)
+
+
+@app.post("/seguimiento/estado/visto")
+def seguimiento_estado_visto(
+    hasta: str | None = Query(default=None),
+    usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
+    from datetime import datetime
+
+    fecha = None
+    if hasta:
+        try:
+            fecha = datetime.fromisoformat(hasta.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Fecha 'hasta' no válida") from exc
+
+    return marcar_novedades_vistas(usuario.id, fecha)
 
 
 def _validar_import_secret(x_import_secret: str | None) -> None:
