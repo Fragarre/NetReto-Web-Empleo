@@ -23,7 +23,8 @@ FUENTE_ID = 4
 
 EXCLUIDOS = (
     "libre designacion", "libre designación",
-    "concurso general de meritos", "concurso general de méritos", "concurso de traslados",
+    "concurso general de meritos", "concurso general de méritos",
+    "concurso de traslado", "concurso de traslados",
     "comision de servicios", "comisión de servicios",
 )
 
@@ -56,8 +57,7 @@ def _fecha_rss(value: str | None) -> date | None:
     if directa:
         return directa
     try:
-        dt = parsedate_to_datetime(value)
-        return dt.date()
+        return parsedate_to_datetime(value).date()
     except (TypeError, ValueError, OverflowError):
         return _fecha(re.sub(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s*", "", value, flags=re.I))
 
@@ -90,33 +90,39 @@ def _codigo(url: str, title: str) -> str:
     return m.group(1) if m else hashlib.sha1(url.encode()).hexdigest()[:16]
 
 
-def _campo(texto: str, etiqueta: str, siguiente: str | None = None) -> str | None:
-    if siguiente:
-        patron = rf"{re.escape(etiqueta)}\s*:?\s*(.*?)(?=\s+{re.escape(siguiente)}\s*:?(?:\s|$)|$)"
-    else:
-        patron = rf"{re.escape(etiqueta)}\s*:?\s*(.*?)(?=\s+(?:Observaciones|Seguimiento de la oposici[oó]n)\b|$)"
-    m = re.search(patron, texto, re.I)
-    return _norm(m.group(1)) if m else None
+def _detalle_tabla(soup: BeautifulSoup) -> dict[str, str]:
+    valores: dict[str, str] = {}
+    for tr in soup.find_all("tr"):
+        celdas = [_norm(c.get_text(" ", strip=True)) for c in tr.find_all(["th", "td"])]
+        if len(celdas) < 2:
+            continue
+        etiqueta = _sin_acentos(celdas[0]).rstrip(":")
+        valor = celdas[1]
+        if etiqueta and valor:
+            valores[etiqueta] = valor
+    return valores
+
+
+def _valor_detalle(valores: dict[str, str], etiqueta: str) -> str | None:
+    return valores.get(_sin_acentos(etiqueta).rstrip(":"))
 
 
 def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     texto = _norm(soup.get_text(" ", strip=True))
+    valores = _detalle_tabla(soup)
 
-    plaza = _campo(texto, "Plaza", "Entidad") or _norm(rss_title)
-    entidad = _campo(texto, "Entidad", "Vacantes")
-    vacantes = _int(_campo(texto, "Vacantes", "Tipo contrato"))
-    tipo_prueba = _campo(texto, "Tipo Prueba", "Presentación instancias")
-    fecha_apertura = _fecha(_campo(texto, "Fecha Inicio", "Fecha Final"))
-    fecha_cierre = _fecha(_campo(texto, "Fecha Final", "Observaciones"))
-    observaciones = _campo(texto, "Observaciones")
+    plaza = _valor_detalle(valores, "Plaza") or _norm(rss_title)
+    entidad = _valor_detalle(valores, "Entidad")
+    vacantes = _int(_valor_detalle(valores, "Vacantes"))
+    tipo_prueba = _valor_detalle(valores, "Tipo Prueba")
+    fecha_apertura = _fecha(_valor_detalle(valores, "Fecha Inicio"))
+    fecha_cierre = _fecha(_valor_detalle(valores, "Fecha Final"))
+    observaciones = _valor_detalle(valores, "Observaciones")
     codigo = _codigo(url, rss_title)
 
     titulo = plaza or _norm(rss_title) or f"Proceso Diputación Alicante {codigo}"
 
-    # La condición de oportunidad se determina sobre los datos descriptivos
-    # del proceso, no sobre toda la tabla histórica de hitos. La tabla puede
-    # mencionar promoción interna en un ejercicio de un proceso mixto.
     texto_clave = _sin_acentos(" ".join(filter(None, (rss_title, plaza, observaciones))))
     tiene_turno_libre = "turno libre" in texto_clave or "oposicion libre" in texto_clave
     tiene_promocion_interna = "promocion interna" in texto_clave
@@ -223,11 +229,9 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
                         proceso_id, inserted = _upsert(cursor, datos)
                         if inserted:
                             estadisticas["procesos"] += 1
-
                         pub = datos["publicacion"]
                         referencia = pub["referencia"]
                         fecha_publicacion = rss_date or date.today()
-
                         cursor.execute(
                             "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s AND url=%s LIMIT 1",
                             (FUENTE_ID, referencia, pub["url"]),
@@ -270,8 +274,6 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
                                 "error": f"{type(exc).__name__}: {exc}",
                             })
                         connection.rollback()
-                        # El rollback invalida el cursor actual; abrimos uno nuevo
-                        # para continuar con el siguiente elemento.
                         cursor.close()
                         cursor = connection.cursor()
             connection.commit()
@@ -296,3 +298,4 @@ def diagnosticar_diputacion_alicante() -> dict[str, Any]:
             "rss_items": len(enlaces),
             "muestra": [{"titulo": t, "url": u, "fecha": d.isoformat() if d else None} for t, u, d in enlaces[:10]],
         }
+    
