@@ -22,6 +22,15 @@ TIPOS_INCLUIDOS = {
     "concurso-oposicion",
 }
 
+# Algunas páginas de consulta de listas de Sanidad aparecen clasificadas
+# técnicamente como "Bolsa de trabajo", pero no son una oportunidad de
+# acceso o inscripción para el opositor.
+PATRONES_BOLSA_NO_OPORTUNIDAD = (
+    "consulta de baremo y posicion",
+    "consulta de estados voluntarios",
+    "consulta de estado voluntario",
+)
+
 
 def _tipo_convocatoria(texto: str) -> str | None:
     normal = base._sin_acentos(texto)
@@ -29,6 +38,8 @@ def _tipo_convocatoria(texto: str) -> str | None:
     if not m:
         return None
     valor = base._normalizar(m.group(1))
+    if any(patron in valor for patron in PATRONES_BOLSA_NO_OPORTUNIDAD):
+        return "Consulta administrativa"
     patrones = (
         ("bolsa de trabajo", "Bolsa de trabajo"),
         ("oposicion", "Oposición"),
