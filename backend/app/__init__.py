@@ -25,3 +25,10 @@ class _PyMuPDFReader:
 
 
 pypdf.PdfReader = _PyMuPDFReader
+
+# Sustituimos la función genérica de extracción por una que identifica la
+# convocatoria concreta dentro de publicaciones que contienen varios temarios.
+from . import empleo_admin as _empleo_admin
+from .temario_extractor import extraer_temario_oficial as _extraer_temario_oficial
+
+_empleo_admin.extraer_temario_oficial = _extraer_temario_oficial
