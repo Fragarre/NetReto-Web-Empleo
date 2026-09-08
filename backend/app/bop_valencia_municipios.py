@@ -22,10 +22,10 @@ def _sin(s: str) -> str:
 def _municipio_desde_titulo(titulo: str) -> str | None:
     n = _sin(titulo)
     patrones = (
-        r"ayuntamiento de\s+([^.,;:]+)",
-        r"ajuntament de\s+([^.,;:]+)",
-        r"ayuntamiento del\s+([^.,;:]+)",
-        r"ajuntament del\s+([^.,;:]+)",
+        r"ayuntamiento de\s+(.+?)(?=\s+sobre\b|[.,;:]|$)",
+        r"ajuntament de\s+(.+?)(?=\s+sobre\b|[.,;:]|$)",
+        r"ayuntamiento del\s+(.+?)(?=\s+sobre\b|[.,;:]|$)",
+        r"ajuntament del\s+(.+?)(?=\s+sobre\b|[.,;:]|$)",
     )
     for patron in patrones:
         m = re.search(patron, n, re.I)
@@ -39,6 +39,9 @@ def _es_empleo_administrativo(titulo: str) -> bool:
     exclusiones = (
         "subvencion", "subvencio", "premio", "premi", "ayuda", "ajuda",
         "libre designacion", "provision de puesto", "provisio de lloc",
+        "provision del puesto", "provisio del lloc", "provision d'un puesto", "provisio d'un lloc",
+        "concurso especifico de meritos", "concurs especific de merits",
+        "abierto a otras administraciones publicas", "obert a altres administracions publiques",
         "promocion interna", "promocio interna",
     )
     if any(x in n for x in exclusiones):
