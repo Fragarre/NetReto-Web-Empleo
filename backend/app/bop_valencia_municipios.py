@@ -3,9 +3,12 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import httpx
+from bs4 import BeautifulSoup
 
+from . import bop_valencia as _bop
 from . import bop_valencia_patch as _bop_patch
 from .ambito_administrativo import clasificar_ambito_administrativo
 from .database import get_connection
@@ -27,8 +30,7 @@ def _municipio_desde_titulo(titulo: str) -> str | None:
     for patron in patrones:
         m = re.search(patron, n, re.I)
         if m:
-            nombre = " ".join(m.group(1).split()).strip()
-            return nombre[:120]
+            return " ".join(m.group(1).split()).strip()[:120]
     return None
 
 
@@ -45,6 +47,36 @@ def _es_empleo_administrativo(titulo: str) -> bool:
     return ambito == "SI"
 
 
+def _extraer_anuncios_municipales(html: str) -> list[dict[str, Any]]:
+    texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+    registro_patron = re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", re.I)
+    resultados: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    for mr in registro_patron.finditer(texto):
+        numero = mr.group(1)
+        inicio = texto.rfind("Anunci", 0, mr.start())
+        if inicio < 0:
+            inicio = texto.rfind("Anuncio", 0, mr.start())
+        if inicio < 0:
+            continue
+        titulo = _bop._norm(texto[inicio:mr.start()]).rstrip(".") + "."
+        municipio = _municipio_desde_titulo(titulo)
+        if not municipio or numero in vistos:
+            continue
+        vistos.add(numero)
+        contexto = texto[inicio:mr.end() + 150]
+        fm = re.search(r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})", contexto, re.I)
+        fecha = _bop._fecha(fm.group(1)) if fm else None
+        resultados.append({
+            "titulo": titulo,
+            "url": f"{_bop.DOWNLOAD_URL}?anuncioNumReg={quote(numero)}&lang=es",
+            "registro": numero,
+            "fecha_publicacion": fecha,
+            "municipio": municipio,
+        })
+    return resultados
+
+
 def descubrir_municipales_bop(*, hasta: date | None = None, dias: int = 30) -> dict[str, Any]:
     hasta = hasta or date.today()
     desde = hasta - timedelta(days=max(0, dias - 1))
@@ -56,11 +88,8 @@ def descubrir_municipales_bop(*, hasta: date | None = None, dias: int = 30) -> d
         while fecha <= hasta:
             _, html, _ = _bop_patch._obtener_pagina(client, fecha)
             if html:
-                for anuncio in _bop_patch._extraer_anuncios_pagina(html):
+                for anuncio in _extraer_anuncios_municipales(html):
                     titulo = anuncio["titulo"]
-                    municipio = _municipio_desde_titulo(titulo)
-                    if not municipio:
-                        continue
                     if not _es_empleo_administrativo(titulo):
                         continue
                     registro = anuncio["registro"]
@@ -70,7 +99,7 @@ def descubrir_municipales_bop(*, hasta: date | None = None, dias: int = 30) -> d
                     hallazgos.append({
                         "registro": registro,
                         "fecha_publicacion": anuncio["fecha_publicacion"].isoformat() if anuncio["fecha_publicacion"] else None,
-                        "municipio_detectado": municipio,
+                        "municipio_detectado": anuncio["municipio"],
                         "titulo": titulo,
                         "url": anuncio["url"],
                     })
