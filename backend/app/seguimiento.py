@@ -5,6 +5,20 @@ from datetime import datetime
 from .database import get_connection
 
 
+CAMPOS_CAMBIO_RELEVANTES = (
+    "fecha_apertura",
+    "fecha_cierre",
+    "fecha_examen",
+    "lugar_examen",
+    "estado",
+    "plazas",
+    "turno",
+    "etapa_actual",
+    "tipo_proceso",
+    "url_oficial",
+)
+
+
 def suscripciones_usuario(user_id: UUID) -> list[dict[str, Any]]:
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -34,7 +48,10 @@ def suscripciones_usuario(user_id: UUID) -> list[dict[str, Any]]:
                 FROM suscripciones s
                 JOIN procesos p ON p.id = s.proceso_id
                 JOIN organismos o ON o.id = p.organismo_id
-                WHERE s.user_id = %s AND s.activa = TRUE AND p.es_oportunidad = TRUE
+                WHERE s.user_id = %s
+                  AND s.activa = TRUE
+                  AND p.es_oportunidad = TRUE
+                  AND p.ambito_administrativo = 'SI'
                 ORDER BY s.created_at DESC, s.id DESC
                 """,
                 (str(user_id),),
@@ -51,7 +68,11 @@ def suscripcion_usuario_proceso(user_id: UUID, proceso_id: int) -> dict[str, Any
                 """
                 SELECT s.id, s.proceso_id, s.activa, s.created_at, s.updated_at
                 FROM suscripciones s
-                WHERE s.user_id = %s AND s.proceso_id = %s
+                JOIN procesos p ON p.id = s.proceso_id
+                WHERE s.user_id = %s
+                  AND s.proceso_id = %s
+                  AND p.es_oportunidad = TRUE
+                  AND p.ambito_administrativo = 'SI'
                 """,
                 (str(user_id), proceso_id),
             )
@@ -66,14 +87,14 @@ def suscribirse(user_id: UUID, proceso_id: int) -> dict[str, Any]:
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT es_oportunidad FROM procesos WHERE id = %s",
+                "SELECT es_oportunidad, ambito_administrativo FROM procesos WHERE id = %s",
                 (proceso_id,),
             )
             row = cursor.fetchone()
             if row is None:
                 raise ValueError("Proceso no encontrado")
-            if not row[0]:
-                raise ValueError("El proceso no está disponible como oportunidad")
+            if not row[0] or row[1] != "SI":
+                raise ValueError("El proceso no está disponible como convocatoria administrativa")
 
             cursor.execute(
                 """
@@ -109,11 +130,11 @@ def cancelar_suscripcion(user_id: UUID, proceso_id: int) -> bool:
 
 
 def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]:
-    """Devuelve novedades útiles de convocatorias seguidas.
+    """Devuelve únicamente novedades sustantivas de convocatorias seguidas.
 
-    Las publicaciones oficiales se muestran como novedades por sí mismas.
-    Los cambios internos solo se muestran cuando modifican un valor ya existente;
-    las altas iniciales desde NULL se consideran carga/enriquecimiento y no una novedad.
+    Se excluyen cambios técnicos de captura o normalización (por ejemplo,
+    denominación, navegación y enriquecimiento inicial) aunque hayan quedado
+    registrados históricamente como significativos.
     """
     limite = max(1, min(limite, 200))
     with get_connection() as connection:
@@ -142,6 +163,9 @@ def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]
                     WHERE s.user_id = %s
                       AND s.activa = TRUE
                       AND p.es_oportunidad = TRUE
+                      AND p.ambito_administrativo = 'SI'
+                      AND COALESCE(LOWER(pub.tipo), '') NOT IN ('navegacion', 'navegación')
+                      AND COALESCE(LOWER(pub.titulo), '') <> 'navegación'
 
                     UNION ALL
 
@@ -166,13 +190,17 @@ def cambios_usuario(user_id: UUID, *, limite: int = 100) -> list[dict[str, Any]]
                     WHERE s.user_id = %s
                       AND s.activa = TRUE
                       AND p.es_oportunidad = TRUE
+                      AND p.ambito_administrativo = 'SI'
                       AND c.significativo = TRUE
                       AND c.valor_anterior IS NOT NULL
+                      AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
+                      AND LOWER(COALESCE(c.valor_anterior, '')) <> 'navegación'
+                      AND LOWER(COALESCE(c.valor_anterior, '')) <> 'navegacion'
                 ) novedades
                 ORDER BY detectado_at DESC NULLS LAST, id DESC
                 LIMIT %s
                 """,
-                (str(user_id), str(user_id), limite),
+                (str(user_id), str(user_id), list(CAMPOS_CAMBIO_RELEVANTES), limite),
             )
             rows = cursor.fetchall()
             columns = [description.name for description in cursor.description]
@@ -193,17 +221,10 @@ def estado_novedades_usuario(user_id: UUID) -> dict[str, Any]:
             row = cursor.fetchone()
             if row is None:
                 return {"ultima_novedad_vista_at": None, "updated_at": None}
-            return {
-                "ultima_novedad_vista_at": row[0],
-                "updated_at": row[1],
-            }
+            return {"ultima_novedad_vista_at": row[0], "updated_at": row[1]}
 
 
 def marcar_novedades_vistas(user_id: UUID, hasta: datetime | None) -> dict[str, Any]:
-    """Guarda hasta qué instante de novedades ha visto el usuario.
-
-    El valor solo avanza; una petición antigua no puede hacer retroceder el estado.
-    """
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -226,15 +247,11 @@ def marcar_novedades_vistas(user_id: UUID, hasta: datetime | None) -> dict[str, 
             )
             row = cursor.fetchone()
             connection.commit()
-    return {
-        "ultima_novedad_vista_at": row[0],
-        "updated_at": row[1],
-    }
+    return {"ultima_novedad_vista_at": row[0], "updated_at": row[1]}
 
 
 def preparar_notificaciones() -> dict[str, Any]:
-    """Crea notificaciones pendientes para cambios significativos de procesos suscritos."""
-    creadas = 0
+    """Crea notificaciones solo para cambios sustantivos de procesos administrativos."""
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -243,12 +260,18 @@ def preparar_notificaciones() -> dict[str, Any]:
                 SELECT s.id, c.id, 'PENDIENTE'
                 FROM suscripciones s
                 JOIN cambios c ON c.proceso_id = s.proceso_id
+                JOIN procesos p ON p.id = s.proceso_id
                 WHERE s.activa = TRUE
+                  AND p.es_oportunidad = TRUE
+                  AND p.ambito_administrativo = 'SI'
                   AND c.significativo = TRUE
                   AND c.valor_anterior IS NOT NULL
+                  AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
+                  AND LOWER(COALESCE(c.valor_anterior, '')) NOT IN ('navegación', 'navegacion')
                 ON CONFLICT (suscripcion_id, cambio_id) DO NOTHING
                 RETURNING id
-                """
+                """,
+                (list(CAMPOS_CAMBIO_RELEVANTES),),
             )
             creadas = len(cursor.fetchall())
             cursor.execute(
@@ -257,11 +280,17 @@ def preparar_notificaciones() -> dict[str, Any]:
                 FROM notificaciones n
                 JOIN suscripciones s ON s.id = n.suscripcion_id
                 JOIN cambios c ON c.id = n.cambio_id
+                JOIN procesos p ON p.id = s.proceso_id
                 WHERE n.estado = 'PENDIENTE'
                   AND s.activa = TRUE
+                  AND p.es_oportunidad = TRUE
+                  AND p.ambito_administrativo = 'SI'
                   AND c.significativo = TRUE
                   AND c.valor_anterior IS NOT NULL
-                """
+                  AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
+                  AND LOWER(COALESCE(c.valor_anterior, '')) NOT IN ('navegación', 'navegacion')
+                """,
+                (list(CAMPOS_CAMBIO_RELEVANTES),),
             )
             pendientes = int(cursor.fetchone()[0])
     return {"creadas": creadas, "pendientes": pendientes, "envio": "no_realizado"}
@@ -274,8 +303,7 @@ def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any
             cursor.execute(
                 """
                 SELECT n.id, n.suscripcion_id, n.cambio_id, n.estado,
-                       n.created_at,
-                       s.user_id, s.proceso_id,
+                       n.created_at, s.user_id, s.proceso_id,
                        p.identificador_estable, p.denominacion,
                        c.tipo AS cambio_tipo, c.campo,
                        c.valor_anterior, c.valor_nuevo, c.resumen,
@@ -286,10 +314,14 @@ def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any
                 JOIN cambios c ON c.id = n.cambio_id
                 WHERE n.estado = 'PENDIENTE'
                   AND s.activa = TRUE
+                  AND p.es_oportunidad = TRUE
+                  AND p.ambito_administrativo = 'SI'
+                  AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
+                  AND LOWER(COALESCE(c.valor_anterior, '')) NOT IN ('navegación', 'navegacion')
                 ORDER BY n.created_at ASC, n.id ASC
                 LIMIT %s
                 """,
-                (limite,),
+                (list(CAMPOS_CAMBIO_RELEVANTES), limite),
             )
             rows = cursor.fetchall()
             columns = [description.name for description in cursor.description]
