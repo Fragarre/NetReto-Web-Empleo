@@ -20,6 +20,8 @@ PATRONES_TITULO_EXCLUIDOS = (
     "concurso de traslados", "concurso de traslado", "libre designación", "libre designacion",
     "comisiones de servicio", "comissions de servei", "acto único telemático",
     "acto unico telematico", "acte unic telematic", "acte únic telemàtic",
+    "concurs de mèrits per a la provisió", "concurs de merits per a la provisio",
+    "concurso de méritos para la provisión", "concurso de meritos para la provision",
 )
 
 
@@ -27,6 +29,7 @@ def _condiciones_exclusion() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
     condiciones = ["p.es_oportunidad = TRUE", "p.ambito_administrativo = 'SI'"]
     condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
+    condiciones.append("COALESCE(UPPER(p.turno), '') <> 'PROMOCION_INTERNA'")
     # El cierre de inscripción no finaliza el proceso selectivo.
     condiciones.append("COALESCE(LOWER(p.estado), '') NOT IN ('cerrado', 'finalizado')")
     params: list[Any] = list(TIPOS_EXCLUIDOS)
