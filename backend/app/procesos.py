@@ -22,6 +22,8 @@ PATRONES_TITULO_EXCLUIDOS = (
     "acto unico telematico", "acte unic telematic", "acte únic telemàtic",
     "concurs de mèrits per a la provisió", "concurs de merits per a la provisio",
     "concurso de méritos para la provisión", "concurso de meritos para la provision",
+    "concurs de mèrits per a cobrir", "concurs de merits per a cobrir",
+    "concurso de méritos para cubrir", "concurso de meritos para cubrir",
 )
 
 
