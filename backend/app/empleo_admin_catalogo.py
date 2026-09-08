@@ -18,6 +18,7 @@ from .temario_extractor import extraer_temario_oficial as _extraer_temario_ofici
 from .ambito_administrativo import AMBITOS
 from . import bop_valencia as _bop
 from . import bop_valencia_patch as _bop_patch
+from .ayuntamiento_valencia import importar_ayuntamiento_valencia
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial_unicode
 
@@ -83,6 +84,23 @@ def cambiar_ambito_administrativo(
         if row is None:
             raise HTTPException(status_code=404, detail="Proceso no encontrado")
         return row
+
+
+@router.post("/import/ayuntamiento-valencia")
+def importar_ayuntamiento_valencia_admin(
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Importa las oposiciones administrativas del Ayuntamiento de València."""
+    _validar_import_secret(x_import_secret)
+    try:
+        stats = importar_ayuntamiento_valencia()
+        if stats.get("administrativos", 0) > 0:
+            with get_connection() as connection, connection.cursor() as cursor:
+                cursor.execute("UPDATE organismos SET activo=TRUE, updated_at=NOW() WHERE id=3")
+                connection.commit()
+        return stats
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación Ayuntamiento de València: {exc}") from exc
 
 
 @router.post("/import/bop-valencia-tramo")
