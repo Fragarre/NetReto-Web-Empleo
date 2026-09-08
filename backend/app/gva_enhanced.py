@@ -31,6 +31,19 @@ PATRONES_BOLSA_NO_OPORTUNIDAD = (
     "inscripcion en las listas extraordinarias",
 )
 
+CAMPOS_NOVEDAD_GVA = (
+    "fecha_apertura",
+    "fecha_cierre",
+    "fecha_examen",
+    "lugar_examen",
+    "estado",
+    "plazas",
+    "turno",
+    "etapa_actual",
+    "tipo_proceso",
+    "url_oficial",
+)
+
 
 def _sin(s: str) -> str:
     return base._sin_acentos(s or "")
@@ -106,10 +119,33 @@ base._es_incluido = _es_incluido
 base.parsear_detalle = parsear_detalle
 
 
+def _desactivar_cambios_tecnicos_gva() -> int:
+    """Impide que correcciones de captura se conviertan en novedades del opositor."""
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE cambios c
+            SET significativo = FALSE
+            FROM procesos p
+            WHERE p.id = c.proceso_id
+              AND p.organismo_id = %s
+              AND c.significativo = TRUE
+              AND (
+                    LOWER(COALESCE(c.campo, '')) <> ALL(%s)
+                    OR LOWER(COALESCE(c.valor_anterior, '')) IN ('navegación', 'navegacion')
+                    OR LOWER(COALESCE(c.valor_nuevo, '')) IN ('navegación', 'navegacion')
+                  )
+            """,
+            (base.GVA_ORGANISMO_ID, list(CAMPOS_NOVEDAD_GVA)),
+        )
+        return cursor.rowcount
+
+
 def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = None) -> dict[str, Any]:
     """Importa GVA y clasifica únicamente los procesos aún en REVISION.
 
     Las decisiones manuales SI/NO nunca se sobrescriben en importaciones posteriores.
+    Los cambios técnicos de captura se conservan en histórico, pero no son novedades.
     """
     stats = _BASE_IMPORTAR_GVA_ROBUSTO(max_paginas=max_paginas, max_detalles=max_detalles)
     actualizados = 0
@@ -136,6 +172,7 @@ def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = Non
             )
             actualizados += cursor.rowcount
     stats["ambito_administrativo_actualizados"] = actualizados
+    stats["cambios_tecnicos_desactivados"] = _desactivar_cambios_tecnicos_gva()
     return stats
 
 
