@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from auth import UsuarioAutenticado, usuario_actual
@@ -84,7 +84,7 @@ def _admin_empleo(usuario: UsuarioAutenticado = Depends(usuario_actual)) -> Usua
 
 
 def listar_pendientes_revision(limite: int = 100) -> list[dict[str, Any]]:
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
             SELECT p.id, p.organismo_id, o.nombre AS organismo_nombre,
@@ -100,7 +100,7 @@ def listar_pendientes_revision(limite: int = 100) -> list[dict[str, Any]]:
             """,
             (limite,),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        return cursor.fetchall()
 
 
 def actualizar_revision(
@@ -111,7 +111,7 @@ def actualizar_revision(
 ) -> dict[str, Any]:
     if estado not in REVISION_ESTADOS:
         raise ValueError("Estado de revisión no válido")
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("SELECT id FROM procesos WHERE id=%s", (proceso_id,))
         if cursor.fetchone() is None:
             raise ValueError("Proceso no encontrado")
@@ -128,7 +128,7 @@ def actualizar_revision(
             """,
             (estado, estado, estado, usuario_id, observaciones, proceso_id),
         )
-        return dict(cursor.fetchone())
+        return cursor.fetchone()
 
 
 def guardar_temario(
@@ -146,7 +146,7 @@ def guardar_temario(
         raise ValueError("Estado de temario no válido")
     if not contenido_texto.strip():
         raise ValueError("El temario no puede estar vacío")
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
             INSERT INTO temarios_empleo
@@ -167,21 +167,21 @@ def guardar_temario(
             (proceso_id, contenido_texto.strip(), origen, estado, fuente_url,
              fuente_publicacion_id, observaciones),
         )
-        return dict(cursor.fetchone())
+        return cursor.fetchone()
 
 
 def obtener_temario(proceso_id: int) -> dict[str, Any] | None:
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("SELECT * FROM temarios_empleo WHERE proceso_id=%s", (proceso_id,))
         row = cursor.fetchone()
         if row is None:
             return None
-        temario = dict(row)
+        temario = row
         cursor.execute(
             "SELECT id, numero, titulo, contenido_texto, orden FROM temas_empleo WHERE temario_id=%s ORDER BY orden",
             (temario["id"],),
         )
-        temario["temas"] = [dict(r) for r in cursor.fetchall()]
+        temario["temas"] = cursor.fetchall()
         return temario
 
 
@@ -195,7 +195,7 @@ def guardar_temas(proceso_id: int, temas: list[dict[str, Any]]) -> dict[str, Any
         if not contenido:
             raise ValueError(f"El tema {i} no puede estar vacío")
         normalizados.append((tema.get("numero"), tema.get("titulo"), contenido, i))
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("DELETE FROM temas_empleo WHERE temario_id=%s", (temario["id"],))
         for numero, titulo, contenido, orden in normalizados:
             cursor.execute(
@@ -215,13 +215,13 @@ def _row_proceso(cursor, proceso_id: int) -> dict[str, Any] | None:
         (proceso_id,),
     )
     row = cursor.fetchone()
-    return dict(row) if row else None
+    return row if row else None
 
 
 def crear_proceso_manual(payload: ProcesoAdminRequest, usuario: UsuarioAutenticado) -> dict[str, Any]:
     if payload.revision_estado not in REVISION_ESTADOS:
         raise ValueError("Estado de revisión no válido")
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("SELECT id FROM organismos WHERE id=%s", (payload.organismo_id,))
         if cursor.fetchone() is None:
             raise ValueError("Organismo no encontrado")
@@ -258,7 +258,7 @@ def crear_proceso_manual(payload: ProcesoAdminRequest, usuario: UsuarioAutentica
 def actualizar_proceso_manual(proceso_id: int, payload: ProcesoAdminRequest, usuario: UsuarioAutenticado) -> dict[str, Any]:
     if payload.revision_estado not in REVISION_ESTADOS:
         raise ValueError("Estado de revisión no válido")
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("SELECT id FROM procesos WHERE id=%s", (proceso_id,))
         if cursor.fetchone() is None:
             raise ValueError("Proceso no encontrado")
@@ -299,7 +299,7 @@ def admin_pendientes(limite: int = 100, _: UsuarioAutenticado = Depends(_admin_e
 
 @router.get("/procesos/{proceso_id}")
 def admin_proceso(proceso_id: int, _: UsuarioAutenticado = Depends(_admin_empleo)) -> dict[str, Any]:
-    with get_connection() as connection, connection.cursor() as cursor:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         row = _row_proceso(cursor, proceso_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Proceso no encontrado")
