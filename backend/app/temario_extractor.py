@@ -123,7 +123,8 @@ def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
             FROM publicaciones
             WHERE proceso_id=%s AND url IS NOT NULL AND TRIM(url) <> ''
             ORDER BY fecha_publicacion DESC NULLS LAST, id DESC
-            """
+            """,
+            (proceso_id,),
         )
         publicaciones = [
             {"id": r[0], "referencia": r[1], "tipo": r[2], "titulo": r[3],
