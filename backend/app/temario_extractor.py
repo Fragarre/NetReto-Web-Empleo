@@ -8,8 +8,12 @@ from typing import Any
 # Algunos PDFs oficiales del DOGV usan glifos de fuentes que los extractores
 # Unicode devuelven como caracteres alternativos. Son errores de extracción,
 # no contenido del documento, y se corrigen antes de presentar/guardar el texto.
+# Estos reemplazos son de glifo, no de palabras concretas, para conservar el
+# texto oficial sin reinterpretarlo.
 _REPARACIONES_GLYPH = {
     "Ɵ": "ti",
+    "ơ": "tí",
+    "İ": "fí",
     "ﬁ": "fi",
     "ﬂ": "fl",
     "ﬃ": "ffi",
