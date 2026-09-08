@@ -3,6 +3,7 @@ import hmac
 import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from access import EmploymentAccess, exigir_employment_access
 from auth import UsuarioAutenticado, usuario_actual
@@ -12,6 +13,7 @@ from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
 from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
 from .ayuntamiento_alicante import diagnosticar_ayuntamiento_alicante, importar_ayuntamiento_alicante
+from .empleo_admin import listar_pendientes_revision, actualizar_revision, guardar_temario, obtener_temario, guardar_temas
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -26,9 +28,34 @@ from .seguimiento import (
     estado_novedades_usuario,
     marcar_novedades_vistas,
 )
+
 from .database import get_connection
 
 app = FastAPI(title="NetReto Empleo API", version="0.1.0")
+
+
+class RevisionRequest(BaseModel):
+    estado: str
+    observaciones: str | None = None
+
+
+class TemarioRequest(BaseModel):
+    contenido_texto: str = Field(min_length=1)
+    origen: str = "MANUAL"
+    estado: str = "PENDIENTE_REVISION"
+    fuente_url: str | None = None
+    fuente_publicacion_id: int | None = None
+    observaciones: str | None = None
+
+
+class TemaRequest(BaseModel):
+    numero: int | None = None
+    titulo: str | None = None
+    contenido_texto: str = Field(min_length=1)
+
+
+class TemasRequest(BaseModel):
+    temas: list[TemaRequest]
 
 
 def _usuario_con_empleo(
@@ -125,6 +152,16 @@ def cambios_proceso(
     return listar_cambios(proceso_id=proceso_id, limite=limite)
 
 
+@app.get("/procesos/{proceso_id}/temario")
+def temario_proceso(
+    proceso_id: int,
+    _: UsuarioAutenticado = Depends(_usuario_con_empleo),
+) -> dict[str, Any]:
+    if obtener_proceso(proceso_id) is None:
+        raise HTTPException(status_code=404, detail="Proceso no encontrado")
+    return obtener_temario(proceso_id) or {"proceso_id": proceso_id, "temario": None}
+
+
 @app.get("/suscripciones")
 def suscripciones(
     usuario: UsuarioAutenticado = Depends(_usuario_con_empleo),
@@ -197,6 +234,65 @@ def _validar_import_secret(x_import_secret: str | None) -> None:
         raise HTTPException(status_code=403, detail="No autorizado")
 
 
+@app.get("/admin/revision/pendientes")
+def revision_pendientes(
+    x_import_secret: str | None = Header(default=None),
+    limite: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return listar_pendientes_revision(limite=limite)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error listando pendientes: {exc}") from exc
+
+
+@app.patch("/admin/procesos/{proceso_id}/revision")
+def revision_proceso(
+    proceso_id: int,
+    payload: RevisionRequest,
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return actualizar_revision(proceso_id, payload.estado, observaciones=payload.observaciones)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/admin/procesos/{proceso_id}/temario")
+def admin_guardar_temario(
+    proceso_id: int,
+    payload: TemarioRequest,
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return guardar_temario(
+            proceso_id,
+            payload.contenido_texto,
+            origen=payload.origen,
+            estado=payload.estado,
+            fuente_url=payload.fuente_url,
+            fuente_publicacion_id=payload.fuente_publicacion_id,
+            observaciones=payload.observaciones,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/admin/procesos/{proceso_id}/temario/temas")
+def admin_guardar_temas(
+    proceso_id: int,
+    payload: TemasRequest,
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return guardar_temas(proceso_id, [x.model_dump() for x in payload.temas])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/admin/seguimiento/preparar-notificaciones")
 def preparar_notificaciones_endpoint(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
@@ -235,7 +331,7 @@ def importar_gva_endpoint(
 
 
 @app.post("/admin/cleanup/gva-stale")
-def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
     _validar_import_secret(x_import_secret)
     try:
         return limpiar_gva_stale()
