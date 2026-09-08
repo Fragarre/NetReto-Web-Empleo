@@ -7,7 +7,15 @@ from psycopg.rows import dict_row
 
 from auth import UsuarioAutenticado
 from .database import get_connection
+from . import empleo_admin as _empleo_admin
 from .empleo_admin import _admin_empleo
+from .temario_extractor import extraer_temario_oficial as _extraer_temario_oficial_unicode
+
+# El router principal de gestión está definido en empleo_admin.py y su endpoint
+# de extracción resuelve extraer_temario_oficial en tiempo de ejecución. Sustituimos
+# aquí la implementación antigua por el extractor Unicode específico, sin duplicar
+# rutas ni alterar el resto del Centro de gestión.
+_empleo_admin.extraer_temario_oficial = _extraer_temario_oficial_unicode
 
 router = APIRouter(prefix="/admin/gestion", tags=["admin-empleo"])
 
