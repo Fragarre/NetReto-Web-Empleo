@@ -10,6 +10,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from . import bop_valencia as _bop
+from .database import get_connection
+from .ambito_administrativo import clasificar_ambito_administrativo
 
 BOP_PORTAL_URL = _bop.BOP_PORTAL_URL
 
@@ -114,10 +116,12 @@ def descubrir_anuncios(client: httpx.Client, historico: bool = False, dias: int 
     fechas = [desde + timedelta(days=i) for i in range((hoy - desde).days + 1)]
     resultados: list[dict[str, Any]] = []
     vistos: set[str] = set()
+
     def obtener(fecha: date) -> tuple[date, str | None, str | None]:
         headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
         with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as c:
             return _obtener_pagina(c, fecha)
+
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(obtener, fecha) for fecha in fechas]
         for future in as_completed(futures):
@@ -169,9 +173,64 @@ _bop._plazas = _plazas_corregida
 _bop._grupo_subgrupo = _grupo_subgrupo_corregida
 
 
+def _postprocesar_ambito_y_cambios() -> tuple[int, int]:
+    """Alinea Diputación con las reglas consolidadas del catálogo.
+
+    - clasifica solo procesos que continúan en REVISION;
+    - no sobrescribe decisiones manuales SI/NO;
+    - desactiva como novedad los enriquecimientos iniciales NULL -> valor;
+    - conserva como significativas las publicaciones oficiales nuevas.
+    """
+    clasificados = 0
+    cambios_tecnicos = 0
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, denominacion, cuerpo_escala, grupo
+            FROM procesos
+            WHERE organismo_id=%s AND ambito_administrativo='REVISION'
+            """,
+            (_bop.ORGANISMO_ID,),
+        )
+        for proceso_id, denominacion, cuerpo_escala, grupo in cursor.fetchall():
+            ambito = clasificar_ambito_administrativo({
+                "denominacion": denominacion,
+                "cuerpo_escala": cuerpo_escala,
+                "grupo": grupo,
+            })
+            if ambito == "REVISION":
+                continue
+            cursor.execute(
+                "UPDATE procesos SET ambito_administrativo=%s, updated_at=NOW() WHERE id=%s AND ambito_administrativo='REVISION'",
+                (ambito, proceso_id),
+            )
+            clasificados += cursor.rowcount
+
+        cursor.execute(
+            """
+            UPDATE cambios c
+            SET significativo=FALSE
+            FROM procesos p
+            WHERE p.id=c.proceso_id
+              AND p.organismo_id=%s
+              AND c.significativo=TRUE
+              AND c.valor_anterior IS NULL
+              AND COALESCE(c.campo,'') <> 'publicacion'
+            """,
+            (_bop.ORGANISMO_ID,),
+        )
+        cambios_tecnicos = cursor.rowcount
+        connection.commit()
+    return clasificados, cambios_tecnicos
+
+
 def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, Any]:
     _bop.descubrir_anuncios = descubrir_anuncios
-    return _bop.importar_bop_valencia(historico=historico, dias=dias)
+    stats = _bop.importar_bop_valencia(historico=historico, dias=dias)
+    clasificados, cambios_tecnicos = _postprocesar_ambito_y_cambios()
+    stats["ambito_administrativo_actualizados"] = clasificados
+    stats["cambios_tecnicos_desactivados"] = cambios_tecnicos
+    return stats
 
 
 def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str, Any]:
