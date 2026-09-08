@@ -25,12 +25,9 @@ PATRONES_TITULO_EXCLUIDOS = (
 
 def _condiciones_exclusion() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
-    # Tu Coach publica únicamente procesos confirmados como administrativos.
-    # REVISION permanece en el Centro de gestión hasta decisión manual.
     condiciones = ["p.es_oportunidad = TRUE", "p.ambito_administrativo = 'SI'"]
     condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
-    # El cierre del plazo de inscripción NO implica que haya finalizado el
-    # proceso selectivo. Puede seguir interesando a quien ya se inscribió.
+    # El cierre de inscripción no finaliza el proceso selectivo.
     condiciones.append("COALESCE(LOWER(p.estado), '') NOT IN ('cerrado', 'finalizado')")
     params: list[Any] = list(TIPOS_EXCLUIDOS)
     for patron in PATRONES_TITULO_EXCLUIDOS:
@@ -45,6 +42,7 @@ SELECT_FIELDS = """
        p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
        p.sistema_selectivo, p.turno, p.plazas, p.estado,
        p.es_oportunidad, p.ambito_administrativo,
+       p.coaching_disponible, p.coaching_convocatoria_id,
        p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
        p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
        p.lugar_examen, p.ultima_publicacion_at,
