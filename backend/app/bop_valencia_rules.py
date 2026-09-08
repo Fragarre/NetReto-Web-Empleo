@@ -9,6 +9,10 @@ _TERMINOS_NO_EMPLEO = (
     "premio", "premios", "premi", "premis",
     "bdns", "concessio de subvencions", "concesion de subvenciones",
     "justificacio de la convocatoria", "justificacion de la convocatoria",
+    "concurs de merits per a cobrir el lloc", "concurs de mèrits per a cobrir el lloc",
+    "concurso de meritos para cubrir el puesto", "concurso de méritos para cubrir el puesto",
+    "concurs de merits per a la provisio", "concurs de mèrits per a la provisió",
+    "concurso de meritos para la provision", "concurso de méritos para la provisión",
 )
 
 _TERMINOS_EMPLEO = (
