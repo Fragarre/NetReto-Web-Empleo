@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import io
 import os
+import re
 from typing import Any
 
+import httpx
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from pypdf import PdfReader
 
 from auth import UsuarioAutenticado, usuario_actual
 from .database import get_connection
@@ -287,6 +292,139 @@ def actualizar_proceso_manual(proceso_id: int, payload: ProcesoAdminRequest, usu
         return _row_proceso(cursor, proceso_id) or {"id": proceso_id}
 
 
+def _normalizar_texto(texto: str) -> str:
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
+    lineas = []
+    for linea in texto.split("\n"):
+        linea = re.sub(r"[ \t]+", " ", linea).strip()
+        if linea:
+            lineas.append(linea)
+    return "\n".join(lineas)
+
+
+def _extraer_texto_fuente(url: str) -> tuple[str, str]:
+    headers = {
+        "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
+        "Accept-Language": "es-ES,es;q=0.9",
+    }
+    with httpx.Client(timeout=45, follow_redirects=True, headers=headers) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").lower()
+        contenido = response.content
+        if "application/pdf" in content_type or contenido[:4] == b"%PDF":
+            reader = PdfReader(io.BytesIO(contenido))
+            paginas = []
+            for pagina in reader.pages:
+                paginas.append(pagina.extract_text() or "")
+            return _normalizar_texto("\n".join(paginas)), str(response.url)
+        soup = BeautifulSoup(contenido, "html.parser")
+        for elemento in soup(["script", "style", "noscript"]):
+            elemento.decompose()
+        return _normalizar_texto(soup.get_text("\n")), str(response.url)
+
+
+def _extraer_bloque_temario(texto: str) -> str | None:
+    """Busca el apartado oficial sin reinterpretar su contenido."""
+    lineas = texto.splitlines()
+    patrones_inicio = (
+        r"^\s*(?:ANEXO\s+[^\n]{0,80}\s*)?(?:TEMARIO|PROGRAMA|PROGRAMA DE MATERIAS|MATERIAS)\s*:?.*$",
+        r"^\s*(?:ANEXO\s+[^\n]{0,80}\s*)?(?:TEMARIO|PROGRAMA|MATERIAS)\s*$",
+    )
+    inicio = None
+    for i, linea in enumerate(lineas):
+        if any(re.match(p, linea, re.I) for p in patrones_inicio):
+            inicio = i
+            break
+    if inicio is None:
+        # Segunda oportunidad para PDFs con títulos pegados al cuerpo.
+        m = re.search(r"(?im)\b(?:TEMARIO|PROGRAMA DE MATERIAS|PROGRAMA|MATERIAS)\b", texto)
+        if not m:
+            return None
+        inicio = texto[:m.start()].count("\n")
+
+    fin = len(lineas)
+    patrones_fin = (
+        r"^\s*(?:ANEXO|BASES|PRIMERA|SEGUNDA|TERCERA|CUARTA|QUINTA|SEXTA|SÉPTIMA|SEPTIMA|OCTAVA|NOVENA|DÉCIMA|DECIMA)\b",
+        r"^\s*(?:SOLICITUDES|TRIBUNAL|COMISIÓN DE SELECCIÓN|COMISION DE SELECCION|RECURSOS)\b",
+    )
+    for j in range(inicio + 1, len(lineas)):
+        if any(re.match(p, lineas[j], re.I) for p in patrones_fin):
+            if j - inicio >= 3:
+                fin = j
+                break
+    bloque = "\n".join(lineas[inicio:fin]).strip()
+    if len(bloque) < 80:
+        return None
+    return bloque
+
+
+def _puntuacion_fuente(pub: dict[str, Any]) -> int:
+    tipo = str(pub.get("tipo") or "").lower()
+    titulo = str(pub.get("titulo") or "").lower()
+    url = str(pub.get("url") or "").lower()
+    score = 0
+    if tipo in {"convocatoria", "bases"}:
+        score += 100
+    if "convoc" in tipo:
+        score += 60
+    if "base" in tipo or "bases" in titulo:
+        score += 50
+    if "convoc" in titulo:
+        score += 30
+    if "boe.es" in url:
+        score += 20
+    if "bop" in url:
+        score += 15
+    if "tribunal" in titulo or "admit" in titulo or "resultado" in titulo or "nombr" in titulo:
+        score -= 100
+    return score
+
+
+def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute("SELECT id, denominacion FROM procesos WHERE id=%s", (proceso_id,))
+        proceso = cursor.fetchone()
+        if proceso is None:
+            raise ValueError("Proceso no encontrado")
+        cursor.execute(
+            """
+            SELECT id, referencia, tipo, titulo, fecha_publicacion, url
+            FROM publicaciones
+            WHERE proceso_id=%s AND url IS NOT NULL AND TRIM(url) <> ''
+            ORDER BY fecha_publicacion DESC NULLS LAST, id DESC
+            """,
+            (proceso_id,),
+        )
+        publicaciones = cursor.fetchall()
+
+    candidatas = sorted(publicaciones, key=_puntuacion_fuente, reverse=True)
+    errores: list[str] = []
+    for pub in candidatas[:12]:
+        try:
+            texto, url_final = _extraer_texto_fuente(str(pub["url"]))
+            bloque = _extraer_bloque_temario(texto)
+            if bloque:
+                return {
+                    "proceso_id": proceso_id,
+                    "denominacion": proceso["denominacion"],
+                    "contenido_texto": bloque,
+                    "fuente_url": url_final,
+                    "fuente_publicacion_id": pub["id"],
+                    "fuente_referencia": pub["referencia"],
+                    "fuente_titulo": pub["titulo"],
+                    "caracteres_fuente": len(texto),
+                }
+        except Exception as exc:
+            errores.append(f"{pub['id']}: {exc}")
+
+    detalle = "; ".join(errores[-4:])
+    raise ValueError(
+        "No se ha localizado automáticamente un apartado de temario en las publicaciones oficiales disponibles."
+        + (f" Detalles: {detalle}" if detalle else "")
+    )
+
+
 @router.get("/me")
 def admin_me(usuario: UsuarioAutenticado = Depends(_admin_empleo)) -> dict[str, Any]:
     return {"id": str(usuario.id), "email": usuario.email, "admin": True}
@@ -333,6 +471,14 @@ def admin_revision(proceso_id: int, payload: RevisionRequest, usuario: UsuarioAu
 @router.get("/procesos/{proceso_id}/temario")
 def admin_temario(proceso_id: int, _: UsuarioAutenticado = Depends(_admin_empleo)) -> dict[str, Any]:
     return obtener_temario(proceso_id) or {"proceso_id": proceso_id, "temario": None}
+
+
+@router.post("/procesos/{proceso_id}/temario/extraer")
+def admin_extraer_temario(proceso_id: int, _: UsuarioAutenticado = Depends(_admin_empleo)) -> dict[str, Any]:
+    try:
+        return extraer_temario_oficial(proceso_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "Proceso no encontrado" in str(exc) else 422, detail=str(exc)) from exc
 
 
 @router.put("/procesos/{proceso_id}/temario")
