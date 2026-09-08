@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 
@@ -9,23 +10,33 @@ from typing import Any
 # no contenido del documento, y se corrigen antes de presentar/guardar el texto.
 _REPARACIONES_GLYPH = {
     "Ɵ": "ti",
-    "ơ": "tí",
-    "Ɵ": "ti",
-    "İ": "í",
     "ﬁ": "fi",
     "ﬂ": "fl",
     "ﬃ": "ffi",
     "ﬄ": "ffl",
 }
 
+# Algunas versiones del extractor devuelven U+FFFD en lugar del glifo "ti".
+# Solo se reparan secuencias conocidas del corpus oficial; no se sustituye
+# cualquier U+FFFD de forma indiscriminada porque podría ocultar otro carácter.
+_REPARACIONES_REPLACEMENT = {
+    "E�ología": "Etiología",
+    "Caracterís�cas": "Características",
+    "Incon�nencia": "Incontinencia",
+    "�pos": "tipos",
+    "palia�vos": "paliativos",
+    "Ac�tudes": "Actitudes",
+    "an�cipadas": "anticipadas",
+    "ges�ón": "gestión",
+}
+
 
 def _reparar_caracteres(texto: str) -> str:
+    texto = unicodedata.normalize("NFKC", texto)
     for origen, destino in _REPARACIONES_GLYPH.items():
         texto = texto.replace(origen, destino)
-    # En esta familia de PDFs el carácter de reemplazo aparece donde la fuente
-    # perdió la secuencia "ti". Se restaura la secuencia para evitar publicar
-    # texto corrupto en el temario.
-    texto = texto.replace("�", "ti")
+    for origen, destino in _REPARACIONES_REPLACEMENT.items():
+        texto = texto.replace(origen, destino)
     return texto
 
 
@@ -112,8 +123,7 @@ def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
             FROM publicaciones
             WHERE proceso_id=%s AND url IS NOT NULL AND TRIM(url) <> ''
             ORDER BY fecha_publicacion DESC NULLS LAST, id DESC
-            """,
-            (proceso_id,),
+            """
         )
         publicaciones = [
             {"id": r[0], "referencia": r[1], "tipo": r[2], "titulo": r[3],
@@ -141,6 +151,9 @@ def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
                 continue
             if bloque:
                 bloque = _reparar_caracteres(bloque)
+                if not _validar_extraccion(bloque):
+                    errores.append(f"{pub['id']}: temario con caracteres de reemplazo no reparables")
+                    continue
                 return {
                     "proceso_id": proceso_id,
                     "denominacion": proceso["denominacion"],
