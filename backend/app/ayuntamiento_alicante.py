@@ -64,16 +64,34 @@ def _enlaces_indice(html: str) -> list[tuple[str, str]]:
     soup = BeautifulSoup(html, "html.parser")
     resultado: list[tuple[str, str]] = []
     vistos: set[str] = set()
+
     for a in soup.find_all("a", href=True):
-        href = urljoin(BASE_URL, a["href"])
-        if "/rrhh/oposiciones/oposicion.php" not in href:
+        href_original = str(a.get("href") or "").strip()
+        href_normalizado = href_original.replace("&amp;", "&")
+        if "oposicion.php" not in href_normalizado.lower():
             continue
+        href = urljoin(BASE_URL, href_normalizado)
         if href in vistos:
             continue
         vistos.add(href)
         texto = _norm(a.get_text(" ", strip=True))
         if texto:
             resultado.append((texto, href))
+
+    # Fallback para HTML en el que el href haya quedado codificado dentro del
+    # texto fuente y BeautifulSoup no lo exponga como atributo convencional.
+    if not resultado:
+        patron = re.compile(
+            r"(?:href\s*=\s*[\"']|https?://[^\"'<>\s]*?)((?:[^\"'<>\s]*oposicion\.php\?)[^\"'<>\s]*)",
+            re.I,
+        )
+        for m in patron.finditer(html):
+            href = urljoin(BASE_URL, m.group(1).replace("&amp;", "&"))
+            if href in vistos:
+                continue
+            vistos.add(href)
+            resultado.append((href, href))
+
     return resultado
 
 
@@ -117,7 +135,7 @@ def _historial(soup: BeautifulSoup, codigo: str) -> list[dict[str, Any]]:
                 enlace = None
                 a = actual.find("a", href=True)
                 if a:
-                    enlace = urljoin(BASE_URL, a["href"])
+                    enlace = urljoin(BASE_URL, str(a["href"]).replace("&amp;", "&"))
                     titulo = _norm(a.get_text(" ", strip=True)) or titulo
                 clave = f"{codigo}|{fecha.isoformat()}|{titulo}|{enlace or ''}"
                 h = hashlib.sha256(clave.encode("utf-8")).hexdigest()
@@ -177,10 +195,8 @@ def parsear_detalle(url: str, titulo_indice: str, html: str) -> dict[str, Any]:
     fuentes: list[dict[str, Any]] = []
     for a in soup.find_all("a", href=True):
         label = _norm(a.get_text(" ", strip=True))
-        href = urljoin(BASE_URL, a["href"])
-        if not label:
-            continue
-        if re.search(r"\b(B\.O\.P\.|B\.O\.E\.|D\.O\.G\.V\.)", label, re.I):
+        href = urljoin(BASE_URL, str(a["href"]).replace("&amp;", "&"))
+        if label and re.search(r"\b(B\.O\.P\.|B\.O\.E\.|D\.O\.G\.V\.)", label, re.I):
             fuentes.append({"titulo": label, "url": href, "fecha": _fecha(label)})
 
     ultima = max((x["fecha"] for x in fuentes if x["fecha"]), default=None)
@@ -202,12 +218,7 @@ def parsear_detalle(url: str, titulo_indice: str, html: str) -> dict[str, Any]:
         "fecha_cierre": fecha_cierre,
         "fecha_examen": fecha_examen,
         "ultima_publicacion_at": datetime.now(timezone.utc),
-        "datos_json": {
-            "url_detalle": url,
-            "titulo_indice": titulo_indice,
-            "fase_actual": fase,
-            "fuentes": fuentes,
-        },
+        "datos_json": {"url_detalle": url, "titulo_indice": titulo_indice, "fase_actual": fase, "fuentes": fuentes},
         "publicacion": {
             "referencia": f"AALI:{codigo}:DETALLE:{hash_detalle}",
             "tipo": "DETALLE",
@@ -232,52 +243,34 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
             ultima_publicacion_at,fuente_principal_id,datos_json,updated_at
         ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
         ON CONFLICT (identificador_estable) DO UPDATE SET
-            denominacion=EXCLUDED.denominacion,
-            grupo=COALESCE(EXCLUDED.grupo,procesos.grupo),
+            denominacion=EXCLUDED.denominacion, grupo=COALESCE(EXCLUDED.grupo,procesos.grupo),
             tipo_proceso=COALESCE(EXCLUDED.tipo_proceso,procesos.tipo_proceso),
             sistema_selectivo=COALESCE(EXCLUDED.sistema_selectivo,procesos.sistema_selectivo),
-            turno=COALESCE(EXCLUDED.turno,procesos.turno),
-            plazas=COALESCE(EXCLUDED.plazas,procesos.plazas),
-            estado=EXCLUDED.estado,
-            es_oportunidad=EXCLUDED.es_oportunidad,
+            turno=COALESCE(EXCLUDED.turno,procesos.turno), plazas=COALESCE(EXCLUDED.plazas,procesos.plazas),
+            estado=EXCLUDED.estado, es_oportunidad=EXCLUDED.es_oportunidad,
             anio_convocatoria=COALESCE(EXCLUDED.anio_convocatoria,procesos.anio_convocatoria),
             fecha_apertura=COALESCE(EXCLUDED.fecha_apertura,procesos.fecha_apertura),
             fecha_cierre=COALESCE(EXCLUDED.fecha_cierre,procesos.fecha_cierre),
             fecha_examen=COALESCE(EXCLUDED.fecha_examen,procesos.fecha_examen),
-            ultima_publicacion_at=EXCLUDED.ultima_publicacion_at,
-            datos_json=EXCLUDED.datos_json,
-            updated_at=NOW()
+            ultima_publicacion_at=EXCLUDED.ultima_publicacion_at, datos_json=EXCLUDED.datos_json, updated_at=NOW()
         RETURNING id,(xmax=0) AS inserted
         """,
-        (
-            ORGANISMO_ID,datos["codigo_externo"],datos["identificador_estable"],datos["denominacion"],datos["grupo"],
-            datos["tipo_proceso"],datos["sistema_selectivo"],datos["turno"],datos["plazas"],datos["estado"],
-            datos["es_oportunidad"],datos["anio_convocatoria"],datos["fecha_apertura"],datos["fecha_cierre"],
-            datos["fecha_examen"],datos["ultima_publicacion_at"],FUENTE_ID,Jsonb(datos["datos_json"]),
-        ),
+        (ORGANISMO_ID,datos["codigo_externo"],datos["identificador_estable"],datos["denominacion"],datos["grupo"],datos["tipo_proceso"],datos["sistema_selectivo"],datos["turno"],datos["plazas"],datos["estado"],datos["es_oportunidad"],datos["anio_convocatoria"],datos["fecha_apertura"],datos["fecha_cierre"],datos["fecha_examen"],datos["ultima_publicacion_at"],FUENTE_ID,Jsonb(datos["datos_json"])),
     )
     row = cursor.fetchone()
     return int(row[0]), bool(row[1])
 
 
 def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any]) -> bool:
-    cursor.execute(
-        "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
-        (FUENTE_ID,pub["referencia"]),
-    )
+    cursor.execute("SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1", (FUENTE_ID,pub["referencia"]))
     if cursor.fetchone() is not None:
         return False
     cursor.execute(
         """
-        INSERT INTO publicaciones(
-            proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,
-            contenido_hash,contenido_texto,datos_json
-        ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+        INSERT INTO publicaciones(proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json)
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
         """,
-        (
-            proceso_id,FUENTE_ID,pub["referencia"],pub["tipo"],pub["titulo"],pub["fecha_publicacion"],
-            pub["url"],pub["contenido_hash"],pub["contenido_texto"],Jsonb(pub["datos_json"]),
-        ),
+        (proceso_id,FUENTE_ID,pub["referencia"],pub["tipo"],pub["titulo"],pub["fecha_publicacion"],pub["url"],pub["contenido_hash"],pub["contenido_texto"],Jsonb(pub["datos_json"])),
     )
     publicacion_id = cursor.fetchone()[0]
     cursor.execute(
@@ -306,18 +299,12 @@ def importar_ayuntamiento_alicante(*, max_detalles: int = 150) -> dict[str, Any]
                         respuesta.raise_for_status()
                         datos = parsear_detalle(url,titulo,respuesta.text)
                         proceso_id,inserted = _upsert(cursor,datos)
-                        if inserted:
-                            estadisticas["procesos"] += 1
-
-                        pub = datos["publicacion"]
-                        if _insertar_publicacion(cursor,proceso_id,pub):
-                            estadisticas["publicaciones"] += 1
-                            estadisticas["cambios"] += 1
-
+                        if inserted: estadisticas["procesos"] += 1
+                        if _insertar_publicacion(cursor,proceso_id,datos["publicacion"]):
+                            estadisticas["publicaciones"] += 1; estadisticas["cambios"] += 1
                         for hito in datos["seguimiento"]:
                             if _insertar_publicacion(cursor,proceso_id,hito):
-                                estadisticas["publicaciones"] += 1
-                                estadisticas["cambios"] += 1
+                                estadisticas["publicaciones"] += 1; estadisticas["cambios"] += 1
                     except Exception as exc:
                         estadisticas["errores"] += 1
                         estadisticas["errores_detalle"].append({"titulo":titulo,"url":url,"error":str(exc)})
@@ -330,4 +317,4 @@ def diagnosticar_ayuntamiento_alicante() -> dict[str, Any]:
         r = client.get(INDEX_URL)
         r.raise_for_status()
         enlaces = _enlaces_indice(r.text)
-        return {"url":INDEX_URL,"descubiertos":len(enlaces),"muestra":[{"titulo":t,"url":u} for t,u in enlaces[:20]]}
+        return {"url":INDEX_URL,"status_code":r.status_code,"content_length":len(r.content),"descubiertos":len(enlaces),"muestra":[{"titulo":t,"url":u} for t,u in enlaces[:20]]}
