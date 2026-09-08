@@ -16,37 +16,25 @@ TIPOS_EXCLUIDOS = (
 )
 
 PATRONES_TITULO_EXCLUIDOS = (
-    "promoción interna",
-    "promocion interna",
-    "promoció interna",
-    "promocio interna",
-    "concurso de traslados",
-    "concurso de traslado",
-    "libre designación",
-    "libre designacion",
-    "comisiones de servicio",
-    "comissions de servei",
-    "acto único telemático",
-    "acto unico telematico",
-    "acte unic telematic",
-    "acte únic telemàtic",
+    "promoción interna", "promocion interna", "promoció interna", "promocio interna",
+    "concurso de traslados", "concurso de traslado", "libre designación", "libre designacion",
+    "comisiones de servicio", "comissions de servei", "acto único telemático",
+    "acto unico telematico", "acte unic telematic", "acte únic telemàtic",
 )
 
 
 def _condiciones_exclusion() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
-    condiciones = ["p.es_oportunidad = TRUE"]
+    # Tu Coach publica únicamente procesos confirmados como administrativos.
+    # REVISION permanece en el Centro de gestión hasta decisión manual.
+    condiciones = ["p.es_oportunidad = TRUE", "p.ambito_administrativo = 'SI'"]
     condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
     # El cierre del plazo de inscripción NO implica que haya finalizado el
-    # proceso selectivo. Una convocatoria puede seguir siendo de interés para
-    # quien ya se inscribió y desea recibir sus publicaciones y cambios.
-    # La exclusión se basa en el estado final del proceso, no en fecha_cierre.
+    # proceso selectivo. Puede seguir interesando a quien ya se inscribió.
     condiciones.append("COALESCE(LOWER(p.estado), '') NOT IN ('cerrado', 'finalizado')")
     params: list[Any] = list(TIPOS_EXCLUIDOS)
     for patron in PATRONES_TITULO_EXCLUIDOS:
-        condiciones.append(
-            "POSITION(%s IN LOWER(COALESCE(p.denominacion, ''))) = 0"
-        )
+        condiciones.append("POSITION(%s IN LOWER(COALESCE(p.denominacion, ''))) = 0")
         params.append(patron)
     return " AND ".join(condiciones), params
 
@@ -56,88 +44,46 @@ SELECT_FIELDS = """
        p.codigo_externo, p.identificador_estable, p.denominacion,
        p.cuerpo_escala, p.grupo, p.subgrupo, p.tipo_proceso,
        p.sistema_selectivo, p.turno, p.plazas, p.estado,
-       p.es_oportunidad,
+       p.es_oportunidad, p.ambito_administrativo,
        p.anio_oep, p.anio_convocatoria, p.fecha_convocatoria,
        p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
        p.lugar_examen, p.ultima_publicacion_at,
        p.fuente_principal_id, p.datos_json,
        (
-           SELECT pub.url
-           FROM publicaciones pub
-           WHERE pub.proceso_id = p.id
-             AND pub.url IS NOT NULL
-             AND TRIM(pub.url) <> ''
-           ORDER BY
-             -- La publicación que representa las bases/convocatoria es la
-             -- fuente oficial de la ficha. Nunca debe ganarle un anuncio
-             -- posterior solo porque su título también contiene "convocatoria".
-             CASE
+           SELECT pub.url FROM publicaciones pub
+           WHERE pub.proceso_id = p.id AND pub.url IS NOT NULL AND TRIM(pub.url) <> ''
+           ORDER BY CASE
                WHEN UPPER(TRIM(COALESCE(pub.tipo, ''))) IN ('CONVOCATORIA', 'BASES') THEN 0
                WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 1
                WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 2
-               ELSE 3
-             END,
-             pub.fecha_publicacion ASC NULLS LAST,
-             pub.id ASC
+               ELSE 3 END,
+             pub.fecha_publicacion ASC NULLS LAST, pub.id ASC
            LIMIT 1
        ) AS url_oficial
 """
 
 
-def listar_procesos(
-    *,
-    organismo_id: int | None = None,
-    estado: str | None = None,
-    limite: int = 100,
-) -> list[dict[str, Any]]:
-    """Lista oportunidades incluidas en el catálogo público."""
+def listar_procesos(*, organismo_id: int | None = None, estado: str | None = None, limite: int = 100) -> list[dict[str, Any]]:
+    """Lista oportunidades administrativas confirmadas del catálogo público."""
     limite = max(1, min(limite, 200))
     exclusion_sql, params = _condiciones_exclusion()
-
-    query = f"""
-        SELECT {SELECT_FIELDS}
-        FROM procesos p
-        JOIN organismos o ON o.id = p.organismo_id
-        WHERE {exclusion_sql}
-    """
-
+    query = f"SELECT {SELECT_FIELDS} FROM procesos p JOIN organismos o ON o.id=p.organismo_id WHERE {exclusion_sql}"
     if organismo_id is not None:
-        query += " AND p.organismo_id = %s"
-        params.append(organismo_id)
+        query += " AND p.organismo_id = %s"; params.append(organismo_id)
     if estado is not None:
-        query += " AND p.estado = %s"
-        params.append(estado)
-
-    query += " ORDER BY COALESCE(p.fecha_examen, p.fecha_convocatoria, p.fecha_apertura) DESC NULLS LAST, p.id DESC LIMIT %s"
+        query += " AND p.estado = %s"; params.append(estado)
+    query += " ORDER BY COALESCE(p.fecha_examen,p.fecha_convocatoria,p.fecha_apertura) DESC NULLS LAST,p.id DESC LIMIT %s"
     params.append(limite)
-
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(query, tuple(params))
-            rows = cursor.fetchall()
-            columns = [description.name for description in cursor.description]
-
-    return [dict(zip(columns, row)) for row in rows]
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(query, tuple(params)); rows=cursor.fetchall(); columns=[d.name for d in cursor.description]
+    return [dict(zip(columns,row)) for row in rows]
 
 
 def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
     exclusion_sql, exclusion_params = _condiciones_exclusion()
-
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT {SELECT_FIELDS}
-                FROM procesos p
-                JOIN organismos o ON o.id = p.organismo_id
-                WHERE p.id = %s
-                  AND {exclusion_sql}
-                """,
-                (proceso_id, *exclusion_params),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                return None
-            columns = [description.name for description in cursor.description]
-
-    return dict(zip(columns, row))
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(f"SELECT {SELECT_FIELDS} FROM procesos p JOIN organismos o ON o.id=p.organismo_id WHERE p.id=%s AND {exclusion_sql}", (proceso_id,*exclusion_params))
+        row=cursor.fetchone()
+        if row is None: return None
+        columns=[d.name for d in cursor.description]
+    return dict(zip(columns,row))
