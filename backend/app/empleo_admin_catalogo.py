@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, timedelta
+import hmac
+import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from psycopg.rows import dict_row
 
@@ -12,6 +16,8 @@ from . import empleo_admin as _empleo_admin
 from .empleo_admin import _admin_empleo
 from .temario_extractor import extraer_temario_oficial as _extraer_temario_oficial_unicode
 from .ambito_administrativo import AMBITOS
+from . import bop_valencia as _bop
+from . import bop_valencia_patch as _bop_patch
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial_unicode
 
@@ -20,6 +26,12 @@ router = APIRouter(prefix="/admin/gestion", tags=["admin-empleo"])
 
 class AmbitoAdministrativoRequest(BaseModel):
     ambito_administrativo: str
+
+
+def _validar_import_secret(x_import_secret: str | None) -> None:
+    secreto = os.getenv("EMPLOYMENT_IMPORT_SECRET")
+    if not secreto or not x_import_secret or not hmac.compare_digest(x_import_secret, secreto):
+        raise HTTPException(status_code=403, detail="No autorizado")
 
 
 @router.get("/convocatorias")
@@ -71,3 +83,61 @@ def cambiar_ambito_administrativo(
         if row is None:
             raise HTTPException(status_code=404, detail="Proceso no encontrado")
         return row
+
+
+@router.post("/import/bop-valencia-tramo")
+def importar_bop_valencia_tramo(
+    hasta: date = Query(..., description="Último día del tramo, formato YYYY-MM-DD"),
+    dias: int = Query(default=30, ge=1, le=45),
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Importa un tramo histórico acotado del BOP de Valencia.
+
+    Permite recorrer históricos largos mediante peticiones cortas para evitar
+    timeouts del proxy/cliente. Es idempotente: las publicaciones ya existentes
+    no se duplican.
+    """
+    _validar_import_secret(x_import_secret)
+    desde = hasta - timedelta(days=dias - 1)
+
+    def descubrir_tramo(client, historico: bool = False, dias: int = 1):
+        fechas = [desde + timedelta(days=i) for i in range((hasta - desde).days + 1)]
+        resultados: list[dict[str, Any]] = []
+        vistos: set[str] = set()
+
+        def obtener(fecha: date):
+            import httpx
+            headers = {
+                "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
+                "Accept-Language": "es-ES,es;q=0.9",
+            }
+            with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as c:
+                return _bop_patch._obtener_pagina(c, fecha)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(obtener, fecha) for fecha in fechas]
+            for future in as_completed(futures):
+                _, html, _ = future.result()
+                if not html:
+                    continue
+                for anuncio in _bop_patch._extraer_anuncios_pagina(html):
+                    if anuncio["registro"] not in vistos:
+                        vistos.add(anuncio["registro"])
+                        resultados.append(anuncio)
+        resultados.sort(key=lambda x: (x["fecha_publicacion"] or date.min, x["registro"]))
+        return resultados
+
+    original = _bop.descubrir_anuncios
+    try:
+        _bop.descubrir_anuncios = descubrir_tramo
+        stats = _bop.importar_bop_valencia(historico=True, dias=dias)
+        clasificados, cambios_tecnicos = _bop_patch._postprocesar_ambito_y_cambios()
+        stats["ambito_administrativo_actualizados"] = clasificados
+        stats["cambios_tecnicos_desactivados"] = cambios_tecnicos
+        stats["tramo_desde"] = desde.isoformat()
+        stats["tramo_hasta"] = hasta.isoformat()
+        return stats
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia por tramo: {exc}") from exc
+    finally:
+        _bop.descubrir_anuncios = original
