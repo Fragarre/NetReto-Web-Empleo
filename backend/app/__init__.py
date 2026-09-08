@@ -30,5 +30,7 @@ pypdf.PdfReader = _PyMuPDFReader
 # convocatoria concreta dentro de publicaciones que contienen varios temarios.
 from . import empleo_admin as _empleo_admin
 from .temario_extractor import extraer_temario_oficial as _extraer_temario_oficial
+from .bop_valencia_rules import aplicar_reglas_bop as _aplicar_reglas_bop
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial
+_aplicar_reglas_bop()
