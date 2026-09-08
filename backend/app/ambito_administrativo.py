@@ -21,7 +21,7 @@ def clasificar_ambito_administrativo(proceso: dict[str, Any]) -> str:
     """
     texto = _normalizar(" ".join(str(proceso.get(k) or "") for k in ("denominacion", "cuerpo_escala", "grupo")))
 
-    # Cuerpos y perfiles administrativos en sentido amplio.
+    # Cuerpos y perfiles administrativos en sentido amplio, en castellano y valenciano.
     patrones_si = (
         r"\bc1-01\b",
         r"\bc2-01\b",
@@ -34,12 +34,23 @@ def clasificar_ambito_administrativo(proceso: dict[str, Any]) -> str:
         r"\bcuerpo superior de administracion\b",
         r"\bcuerpo superior de gestion\b",
         r"\badministracion general\b",
+        r"\badministracio general\b",
         r"\btecnico(?:/a)? de administracion general\b",
-        r"\bauxiliar administrativo\b",
-        r"\badministrativo(?:/a)?\b",
+        r"\btecnic(?:/a)? d['’]?administracio general\b",
+        r"\bauxiliar(?:es)? administrativo(?:s|/a|/va)?\b",
+        r"\bauxiliar(?:s)? administratiu(?:s|/va)?\b",
+        r"\badministrativo(?:s|/a)?\b",
+        r"\badministratiu(?:s|/va|/ves)?\b",
         r"\bagentes? tributarios?\b",
+        r"\bagents? tributaris?\b",
         r"\btecnico(?:/a)? tributario\b",
+        r"\btecnic(?:/a)? tributari\b",
         r"\bgestion tributaria\b",
+        r"\bgestio tributaria\b",
+        r"\brecaudacion\b",
+        r"\brecaptacio\b",
+        r"\boficialia? de recaudacion\b",
+        r"\boficialia? de recaptacio\b",
     )
     if any(re.search(p, texto) for p in patrones_si):
         return "SI"
@@ -49,22 +60,38 @@ def clasificar_ambito_administrativo(proceso: dict[str, Any]) -> str:
     patrones_no = (
         r"investigacion cientifica",
         r"medicina(?: del trabajo)?",
+        r"metge(?:/ssa)? del treball",
         r"enfermeria",
         r"psicologia",
         r"educacion especial",
+        r"educacio especial",
         r"educacion infantil",
+        r"educacio infantil",
+        r"professor(?:/a)?",
+        r"profesor(?:/a)?",
         r"veterinari",
         r"ingenier",
+        r"enginyer",
         r"arquitect",
         r"laboratorio",
+        r"laboratori",
         r"servicios auxiliares de la investigacion",
         r"\bsubalternos?\b",
         r"ayudante de residencia",
         r"agricol",
         r"forestal",
         r"orientacion escolar",
+        r"orientacio escolar",
         r"taller ocupacional",
         r"obras publicas",
+        r"obres publiques",
+        r"mecanic",
+        r"conductor",
+        r"restaurador",
+        r"traductor",
+        r"linguistic",
+        r"delineant",
+        r"comunicacio audiovisual",
     )
     if any(re.search(p, texto) for p in patrones_no):
         return "NO"
