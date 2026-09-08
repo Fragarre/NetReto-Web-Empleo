@@ -52,16 +52,19 @@ SELECT_FIELDS = """
        p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
        p.lugar_examen, p.ultima_publicacion_at,
        p.fuente_principal_id, p.datos_json,
-       (
-           SELECT pub.url FROM publicaciones pub
-           WHERE pub.proceso_id = p.id AND pub.url IS NOT NULL AND TRIM(pub.url) <> ''
-           ORDER BY CASE
-               WHEN UPPER(TRIM(COALESCE(pub.tipo, ''))) IN ('CONVOCATORIA', 'BASES') THEN 0
-               WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 1
-               WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 2
-               ELSE 3 END,
-             pub.fecha_publicacion ASC NULLS LAST, pub.id ASC
-           LIMIT 1
+       COALESCE(
+           (
+               SELECT pub.url FROM publicaciones pub
+               WHERE pub.proceso_id = p.id AND pub.url IS NOT NULL AND TRIM(pub.url) <> ''
+               ORDER BY CASE
+                   WHEN UPPER(TRIM(COALESCE(pub.tipo, ''))) IN ('CONVOCATORIA', 'BASES') THEN 0
+                   WHEN LOWER(COALESCE(pub.tipo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 1
+                   WHEN LOWER(COALESCE(pub.titulo, '')) LIKE CONCAT('%%', 'convoc', '%%') THEN 2
+                   ELSE 3 END,
+                 pub.fecha_publicacion ASC NULLS LAST, pub.id ASC
+               LIMIT 1
+           ),
+           NULLIF(TRIM(COALESCE(p.datos_json->>'url_oficial','')), '')
        ) AS url_oficial
 """
 
