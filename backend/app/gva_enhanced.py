@@ -8,8 +8,10 @@ from bs4 import BeautifulSoup
 
 from . import gva_clean as base
 from .database import get_connection
+from .ambito_administrativo import clasificar_ambito_administrativo
 
 _BASE_PARSEAR_DETALLE = base.parsear_detalle
+_BASE_IMPORTAR_GVA_ROBUSTO = base.importar_gva_robusto
 
 TIPOS_INCLUIDOS = {
     "oposicion",
@@ -102,7 +104,39 @@ base._tipo_convocatoria = _tipo_convocatoria
 base._turno = _turno
 base._es_incluido = _es_incluido
 base.parsear_detalle = parsear_detalle
-importar_gva_robusto = base.importar_gva_robusto
+
+
+def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = None) -> dict[str, Any]:
+    """Importa GVA y clasifica únicamente los procesos aún en REVISION.
+
+    Las decisiones manuales SI/NO nunca se sobrescriben en importaciones posteriores.
+    """
+    stats = _BASE_IMPORTAR_GVA_ROBUSTO(max_paginas=max_paginas, max_detalles=max_detalles)
+    actualizados = 0
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, denominacion, cuerpo_escala, grupo
+            FROM procesos
+            WHERE organismo_id=%s AND ambito_administrativo='REVISION'
+            """,
+            (base.GVA_ORGANISMO_ID,),
+        )
+        for proceso_id, denominacion, cuerpo_escala, grupo in cursor.fetchall():
+            ambito = clasificar_ambito_administrativo({
+                "denominacion": denominacion,
+                "cuerpo_escala": cuerpo_escala,
+                "grupo": grupo,
+            })
+            if ambito == "REVISION":
+                continue
+            cursor.execute(
+                "UPDATE procesos SET ambito_administrativo=%s, updated_at=NOW() WHERE id=%s AND ambito_administrativo='REVISION'",
+                (ambito, proceso_id),
+            )
+            actualizados += cursor.rowcount
+    stats["ambito_administrativo_actualizados"] = actualizados
+    return stats
 
 
 def limpiar_gva_navegacion() -> dict[str, int]:
