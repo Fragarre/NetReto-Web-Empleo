@@ -5,10 +5,8 @@
 # PyMuPDF proporciona una extracción de texto Unicode más robusta para estos
 # documentos. empleo_admin.py sigue usando la interfaz PdfReader, pero aquí
 # se sustituye su implementación antes de que el módulo sea importado.
-import io
-
-import fitz
 import pypdf
+import fitz
 
 
 class _PyMuPDFPage:
@@ -21,11 +19,8 @@ class _PyMuPDFPage:
 
 class _PyMuPDFReader:
     def __init__(self, stream):
-        if hasattr(stream, "read"):
-            data = stream.read()
-        else:
-            data = stream
-        self._document = fitz.open(stream=io.BytesIO(data), filetype="pdf")
+        data = stream.read() if hasattr(stream, "read") else stream
+        self._document = fitz.open(stream=data, filetype="pdf")
         self.pages = [_PyMuPDFPage(page) for page in self._document]
 
 
