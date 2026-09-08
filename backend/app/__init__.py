@@ -31,6 +31,8 @@ pypdf.PdfReader = _PyMuPDFReader
 from . import empleo_admin as _empleo_admin
 from .temario_extractor import extraer_temario_oficial as _extraer_temario_oficial
 from .bop_valencia_rules import aplicar_reglas_bop as _aplicar_reglas_bop
+from .bop_valencia_integrity import aplicar_integridad_bop as _aplicar_integridad_bop
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial
 _aplicar_reglas_bop()
+_aplicar_integridad_bop()
