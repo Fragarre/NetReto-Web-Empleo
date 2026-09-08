@@ -19,6 +19,7 @@ from .ambito_administrativo import AMBITOS
 from . import bop_valencia as _bop
 from . import bop_valencia_patch as _bop_patch
 from .ayuntamiento_valencia import importar_ayuntamiento_valencia
+from .bop_valencia_municipios import descubrir_municipales_bop
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial_unicode
 
@@ -37,7 +38,6 @@ def _validar_import_secret(x_import_secret: str | None) -> None:
 
 @router.get("/convocatorias")
 def admin_convocatorias(_: UsuarioAutenticado = Depends(_admin_empleo)) -> list[dict[str, Any]]:
-    # El Centro de gestión ve también REVISION/NO: solo el catálogo público exige SI.
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -90,7 +90,6 @@ def cambiar_ambito_administrativo(
 def importar_ayuntamiento_valencia_admin(
     x_import_secret: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Importa las oposiciones administrativas del Ayuntamiento de València."""
     _validar_import_secret(x_import_secret)
     try:
         stats = importar_ayuntamiento_valencia()
@@ -103,18 +102,26 @@ def importar_ayuntamiento_valencia_admin(
         raise HTTPException(status_code=502, detail=f"Error en importación Ayuntamiento de València: {exc}") from exc
 
 
+@router.post("/diagnostico/bop-municipios")
+def diagnostico_bop_municipios(
+    hasta: date = Query(..., description="Último día del tramo, formato YYYY-MM-DD"),
+    dias: int = Query(default=30, ge=1, le=45),
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Descubre anuncios administrativos municipales sin escribir en la BD."""
+    _validar_import_secret(x_import_secret)
+    try:
+        return descubrir_municipales_bop(hasta=hasta, dias=dias)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en diagnóstico municipal BOP: {exc}") from exc
+
+
 @router.post("/import/bop-valencia-tramo")
 def importar_bop_valencia_tramo(
     hasta: date = Query(..., description="Último día del tramo, formato YYYY-MM-DD"),
     dias: int = Query(default=30, ge=1, le=45),
     x_import_secret: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Importa un tramo histórico acotado del BOP de Valencia.
-
-    Permite recorrer históricos largos mediante peticiones cortas para evitar
-    timeouts del proxy/cliente. Es idempotente: las publicaciones ya existentes
-    no se duplican.
-    """
     _validar_import_secret(x_import_secret)
     desde = hasta - timedelta(days=dias - 1)
 
