@@ -4,6 +4,31 @@ import re
 from typing import Any
 
 
+# Algunos PDFs oficiales del DOGV usan glifos de fuentes que los extractores
+# Unicode devuelven como caracteres alternativos. Son errores de extracción,
+# no contenido del documento, y se corrigen antes de presentar/guardar el texto.
+_REPARACIONES_GLYPH = {
+    "Ɵ": "ti",
+    "ơ": "tí",
+    "Ɵ": "ti",
+    "İ": "í",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+}
+
+
+def _reparar_caracteres(texto: str) -> str:
+    for origen, destino in _REPARACIONES_GLYPH.items():
+        texto = texto.replace(origen, destino)
+    # En esta familia de PDFs el carácter de reemplazo aparece donde la fuente
+    # perdió la secuencia "ti". Se restaura la secuencia para evitar publicar
+    # texto corrupto en el temario.
+    texto = texto.replace("�", "ti")
+    return texto
+
+
 def _codigo_convocatoria(denominacion: str) -> str | None:
     match = re.search(r"\bConvocatoria\s+(\d+\s*/\s*\d+)\b", denominacion or "", re.I)
     if not match:
@@ -25,8 +50,6 @@ def _bloque_por_convocatoria(texto: str, codigo: str) -> str | None:
         return None
 
     inicio = coincidencia
-    # Conservamos el encabezado TEMARIO que precede a la convocatoria si pertenece
-    # al mismo bloque de publicación.
     for i in range(coincidencia - 1, max(-1, coincidencia - 12), -1):
         if re.search(r"\bTEMARIO\b", lineas[i], re.I):
             inicio = i
@@ -70,12 +93,10 @@ def _bloque_generico(texto: str) -> str | None:
 
 
 def _validar_extraccion(texto: str) -> bool:
-    # No aceptamos una extracción claramente dañada por problemas de codificación.
-    return texto.count("�") == 0
+    return "�" not in texto
 
 
 def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
-    # Importación perezosa para evitar ciclos durante la inicialización del paquete.
     from .empleo_admin import _extraer_texto_fuente, _puntuacion_fuente
     from .database import get_connection
 
@@ -94,12 +115,11 @@ def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
             """,
             (proceso_id,),
         )
-        publicaciones = []
-        for row in cursor.fetchall():
-            publicaciones.append({
-                "id": row[0], "referencia": row[1], "tipo": row[2], "titulo": row[3],
-                "fecha_publicacion": row[4], "url": row[5],
-            })
+        publicaciones = [
+            {"id": r[0], "referencia": r[1], "tipo": r[2], "titulo": r[3],
+             "fecha_publicacion": r[4], "url": r[5]}
+            for r in cursor.fetchall()
+        ]
 
     codigo = _codigo_convocatoria(proceso["denominacion"])
     candidatas = sorted(publicaciones, key=_puntuacion_fuente, reverse=True)
@@ -108,6 +128,7 @@ def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
     for pub in candidatas[:12]:
         try:
             texto, url_final = _extraer_texto_fuente(str(pub["url"]))
+            texto = _reparar_caracteres(texto)
             if not _validar_extraccion(texto):
                 errores.append(f"{pub['id']}: extracción con caracteres de reemplazo")
                 continue
@@ -116,11 +137,10 @@ def extraer_temario_oficial(proceso_id: int) -> dict[str, Any]:
             if bloque is None:
                 bloque = _bloque_generico(texto)
 
-            # Si conocemos la convocatoria, no aceptamos un bloque genérico que
-            # pueda pertenecer a otra convocatoria de la misma publicación.
             if codigo and bloque is None:
                 continue
             if bloque:
+                bloque = _reparar_caracteres(bloque)
                 return {
                     "proceso_id": proceso_id,
                     "denominacion": proceso["denominacion"],
