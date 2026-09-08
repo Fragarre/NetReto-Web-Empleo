@@ -21,6 +21,7 @@ from .empleo_admin import (
     guardar_temas,
     router as empleo_admin_router,
 )
+from .empleo_admin_catalogo import router as empleo_admin_catalogo_router
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
@@ -38,6 +39,7 @@ from .seguimiento import (
 
 app = FastAPI(title="NetReto Empleo API", version="0.1.0")
 app.include_router(empleo_admin_router)
+app.include_router(empleo_admin_catalogo_router)
 
 
 class RevisionRequest(BaseModel):
@@ -217,137 +219,3 @@ def admin_guardar_temas(proceso_id: int, payload: TemasRequest, x_import_secret:
         return guardar_temas(proceso_id, [x.model_dump() for x in payload.temas])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/admin/seguimiento/preparar-notificaciones")
-def preparar_notificaciones_endpoint(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return preparar_notificaciones()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error preparando notificaciones: {exc}") from exc
-
-
-@app.get("/admin/seguimiento/notificaciones-pendientes")
-def notificaciones_pendientes_endpoint(x_import_secret: str | None = Header(default=None), limite: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return listar_notificaciones_pendientes(limite=limite)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error listando notificaciones: {exc}") from exc
-
-
-@app.post("/admin/import/gva")
-def importar_gva_endpoint(x_import_secret: str | None = Header(default=None), max_paginas: int = Query(default=3, ge=1, le=10), max_detalles: int | None = Query(default=None, ge=1, le=300)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        resultado = importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
-        resultado["limpieza_stale"] = limpiar_gva_stale()
-        resultado["correccion_turnos"] = corregir_turnos_gva()
-        return resultado
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
-
-
-@app.post("/admin/cleanup/gva-stale")
-def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return limpiar_gva_stale()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en limpieza GVA: {exc}") from exc
-
-
-@app.post("/admin/cleanup/gva-turnos")
-def cleanup_gva_turnos(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return corregir_turnos_gva()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en corrección de turnos GVA: {exc}") from exc
-
-
-@app.post("/admin/cleanup/gva-navegacion")
-def cleanup_gva_navegacion(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return limpiar_gva_navegacion()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en limpieza GVA: {exc}") from exc
-
-
-@app.get("/admin/debug/bop")
-def debug_bop(x_import_secret: str | None = Header(default=None), fecha: str | None = Query(default=None)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        import httpx
-        headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
-        with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
-            return diagnosticar_bop(client, fecha=fecha)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en diagnóstico BOP: {exc}") from exc
-
-
-@app.post("/admin/import/bop-valencia")
-def importar_bop_valencia_endpoint(x_import_secret: str | None = Header(default=None), historico: bool = Query(default=False), dias: int = Query(default=250, ge=1, le=730)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        resultado = importar_bop_valencia(historico=historico, dias=dias)
-        resultado["oportunidades_marcadas"] = True
-        return resultado
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en importación BOP Valencia: {exc}") from exc
-
-
-@app.post("/admin/cleanup/bop-valencia-no-empleo")
-def cleanup_bop_valencia_no_empleo(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return limpiar_anuncios_no_empleo()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en limpieza BOP Valencia: {exc}") from exc
-
-
-@app.post("/admin/cleanup/bop-valencia-normalizar-prueba")
-def cleanup_bop_valencia_normalizar_prueba(x_import_secret: str | None = Header(default=None)) -> dict[str, int]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return normalizar_bop_prueba()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en normalización BOP Valencia: {exc}") from exc
-
-
-@app.get("/admin/debug/diputacion-alicante")
-def debug_diputacion_alicante(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return diagnosticar_diputacion_alicante()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en diagnóstico Diputación Alicante: {exc}") from exc
-
-
-@app.post("/admin/import/diputacion-alicante")
-def importar_diputacion_alicante_endpoint(x_import_secret: str | None = Header(default=None), max_detalles: int = Query(default=100, ge=1, le=300)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return importar_diputacion_alicante(max_detalles=max_detalles)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en importación Diputación Alicante: {exc}") from exc
-
-
-@app.get("/admin/debug/ayuntamiento-alicante")
-def debug_ayuntamiento_alicante(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return diagnosticar_ayuntamiento_alicante()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en diagnóstico Ayuntamiento Alicante: {exc}") from exc
-
-
-@app.post("/admin/import/ayuntamiento-alicante")
-def importar_ayuntamiento_alicante_endpoint(x_import_secret: str | None = Header(default=None), max_detalles: int = Query(default=150, ge=1, le=300)) -> dict[str, Any]:
-    _validar_import_secret(x_import_secret)
-    try:
-        return importar_ayuntamiento_alicante(max_detalles=max_detalles)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error en importación Ayuntamiento Alicante: {exc}") from exc
