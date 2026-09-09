@@ -43,6 +43,8 @@ def clasificar_ambito_administrativo(proceso: dict[str, Any]) -> str:
         r"arquitect",
         r"laboratorio",
         r"laboratori",
+        r"biblioteca",
+        r"bibliotecari",
         r"servicios auxiliares de la investigacion",
         r"\bsubaltern(?:o|a|os|es)?\b",
         r"\bconser(?:je|ge)(?:s)?\b",
