@@ -50,6 +50,19 @@ def _municipio_desde_titulo(titulo: str) -> str | None:
     return None
 
 
+def _municipio_visible_desde_titulo(titulo: str) -> str | None:
+    """Conserva grafía y acentos del municipio tal como aparecen en el BOP."""
+    if not _es_emisor_ayuntamiento(titulo):
+        return None
+    t = _reparar_mojibake_utf8(titulo)
+    fin = r"(?=\s+sobre\b|\s+per\s+a\b|\s+para\b|[.,;:]|$)"
+    for patron in (rf"(?:Ayuntamiento|Ajuntament)\s+de\s+(.+?){fin}", rf"(?:Ayuntamiento|Ajuntament)\s+del\s+(.+?){fin}", rf"(?:Ayuntamiento|Ajuntament)\s+d['’]\s*(.+?){fin}"):
+        m = re.search(patron, t, re.I)
+        if m:
+            return " ".join(m.group(1).split()).strip()[:120]
+    return None
+
+
 def _es_perfil_administrativo(titulo: str) -> bool:
     return clasificar_ambito_administrativo({"denominacion": titulo, "cuerpo_escala": None, "grupo": None}) == "SI"
 
@@ -88,7 +101,7 @@ def _extraer_anuncios_municipales(html: str) -> list[dict[str, Any]]:
         contexto = texto[inicio:mr.end()+150]
         fm = re.search(r"(?:Data publicaci[oó]|Fecha publicaci[oó]n)\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})", contexto, re.I)
         fecha = _bop._fecha(fm.group(1)) if fm else None
-        resultados.append({"titulo":titulo,"url":f"{_bop.DOWNLOAD_URL}?anuncioNumReg={quote(numero)}&lang=es","registro":numero,"fecha_publicacion":fecha,"municipio":municipio})
+        resultados.append({"titulo":titulo,"url":f"{_bop.DOWNLOAD_URL}?anuncioNumReg={quote(numero)}&lang=es","registro":numero,"fecha_publicacion":fecha,"municipio":municipio,"municipio_visible":_municipio_visible_desde_titulo(titulo)})
     return resultados
 
 
@@ -105,7 +118,7 @@ def descubrir_municipales_bop(*, hasta: date | None=None, dias: int=30) -> dict[
             if html:
                 for a in _extraer_anuncios_municipales(html):
                     if not _es_empleo_administrativo(a["titulo"]) or a["registro"] in vistos: continue
-                    vistos.add(a["registro"]); hallazgos.append({"registro":a["registro"],"fecha_publicacion":a["fecha_publicacion"].isoformat() if a["fecha_publicacion"] else None,"municipio_detectado":a["municipio"],"clase":_clasificar_anuncio(a["titulo"]),"titulo":a["titulo"],"url":a["url"]})
+                    vistos.add(a["registro"]); hallazgos.append({"registro":a["registro"],"fecha_publicacion":a["fecha_publicacion"].isoformat() if a["fecha_publicacion"] else None,"municipio_detectado":a["municipio"],"municipio_visible":a["municipio_visible"],"clase":_clasificar_anuncio(a["titulo"]),"titulo":a["titulo"],"url":a["url"]})
             fecha+=timedelta(days=1)
     hallazgos.sort(key=lambda x:(x["fecha_publicacion"] or "",x["registro"])); conteo=Counter(h["clase"] for h in hallazgos); candidatas=[h for h in hallazgos if h["clase"]=="NUEVA_CONVOCATORIA"]
     return {"desde":desde.isoformat(),"hasta":hasta.isoformat(),"descubiertos":len(hallazgos),"resumen_clases":dict(sorted(conteo.items())),"candidatas_nuevas":len(candidatas),"dias_con_error":len(errores),"errores":errores,"hallazgos":hallazgos}
@@ -117,26 +130,11 @@ def _nombre_municipio(slug: str) -> str:
 
 def _extraer_plazas(titulo: str) -> int | None:
     n = _sin(titulo)
-    palabras = {
-        "una": 1, "un": 1,
-        "dues": 2, "dos": 2,
-        "tres": 3,
-        "quatre": 4, "cuatro": 4,
-        "cinc": 5, "cinco": 5,
-        "sis": 6, "seis": 6,
-        "set": 7, "siete": 7,
-        "huit": 8, "vuit": 8, "ocho": 8,
-        "nou": 9, "nueve": 9,
-        "deu": 10, "diez": 10,
-    }
-    # Número explícito antes de plaza(s) o puesto(s), en valenciano o castellano.
+    palabras = {"una":1,"un":1,"dues":2,"dos":2,"tres":3,"quatre":4,"cuatro":4,"cinc":5,"cinco":5,"sis":6,"seis":6,"set":7,"siete":7,"huit":8,"vuit":8,"ocho":8,"nou":9,"nueve":9,"deu":10,"diez":10}
     m = re.search(r"\b(\d+|una|un|dues|dos|tres|quatre|cuatro|cinc|cinco|sis|seis|set|siete|huit|vuit|ocho|nou|nueve|deu|diez)\s+(?:placa|places|plaza|plazas|lloc|llocs|puesto|puestos)\b", n)
     if m:
-        valor = m.group(1)
-        return int(valor) if valor.isdigit() else palabras.get(valor)
-    # Singular inequívoco con artículo definido.
-    if re.search(r"\bla\s+(?:placa|plaza)\b", n) or re.search(r"\b(?:el|l['’])\s*(?:lloc|puesto)\b", n):
-        return 1
+        valor=m.group(1); return int(valor) if valor.isdigit() else palabras.get(valor)
+    if re.search(r"\bla\s+(?:placa|plaza)\b", n) or re.search(r"\b(?:el|l['’])\s*(?:lloc|puesto)\b", n): return 1
     return None
 
 
@@ -155,7 +153,7 @@ def importar_municipales_bop(*, hasta: date, dias: int=30, aplicar: bool=False) 
             if org:
                 organismo_id=org["id"]; cursor.execute("UPDATE organismos SET activo=TRUE,updated_at=NOW() WHERE id=%s",(organismo_id,))
             else:
-                nombre=f"Ayuntamiento de {_nombre_municipio(municipio)}"; cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id",(nombre,municipio)); organismo_id=cursor.fetchone()["id"]; resultado["organismos_creados"]+=1
+                visible=h.get("municipio_visible") or _nombre_municipio(municipio); nombre=f"Ayuntamiento de {visible}"; cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id",(nombre,municipio)); organismo_id=cursor.fetchone()["id"]; resultado["organismos_creados"]+=1
             cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,plazas,estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,ambito_administrativo,datos_json,updated_at) VALUES (%s,%s,%s,%s,%s,'EN_CURSO',%s,2,TRUE,'SI',%s,NOW()) RETURNING id",(organismo_id,h["registro"],estable,h["titulo"],_extraer_plazas(h["titulo"]),h["fecha_publicacion"],Jsonb({"url_oficial":h["url"],"bop_registro":h["registro"],"origen":"BOP_VALENCIA_MUNICIPAL"}))); pid=cursor.fetchone()["id"]
             resultado["nuevos"]+=1; resultado["detalle"].append({"registro":h["registro"],"estado":"NUEVO","proceso_id":pid,"municipio":municipio})
         connection.commit()
