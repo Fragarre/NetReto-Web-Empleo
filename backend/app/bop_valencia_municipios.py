@@ -116,10 +116,25 @@ def _nombre_municipio(slug: str) -> str:
 
 
 def _extraer_plazas(titulo: str) -> int | None:
-    n=_sin(titulo); palabras={"una":1,"un":1,"dos":2,"dues":2,"tres":3,"quatre":4,"cuatro":4}
-    m=re.search(r"(\d+|una|un|dos|dues|tres|quatre|cuatro)\s+places?",n)
-    if not m: return None
-    return int(m.group(1)) if m.group(1).isdigit() else palabras.get(m.group(1))
+    n = _sin(titulo)
+    palabras = {
+        "una": 1, "un": 1,
+        "dues": 2, "dos": 2,
+        "tres": 3,
+        "quatre": 4, "cuatro": 4,
+        "cinc": 5, "cinco": 5,
+        "sis": 6, "seis": 6,
+        "set": 7, "siete": 7,
+        "huit": 8, "vuit": 8, "ocho": 8,
+        "nou": 9, "nueve": 9,
+        "deu": 10, "diez": 10,
+    }
+    # Valenciano y castellano: plaça/places, plaza/plazas. _sin elimina los acentos.
+    m = re.search(r"\b(\d+|una|un|dues|dos|tres|quatre|cuatro|cinc|cinco|sis|seis|set|siete|huit|vuit|ocho|nou|nueve|deu|diez)\s+(?:placa|places|plaza|plazas)\b", n)
+    if not m:
+        return None
+    valor = m.group(1)
+    return int(valor) if valor.isdigit() else palabras.get(valor)
 
 
 def importar_municipales_bop(*, hasta: date, dias: int=30, aplicar: bool=False) -> dict[str, Any]:
