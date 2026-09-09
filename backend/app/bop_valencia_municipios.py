@@ -58,7 +58,7 @@ def _es_perfil_administrativo(titulo: str) -> bool:
 def _clasificar_anuncio(titulo: str) -> str:
     """Clasifica el papel del anuncio dentro del proceso selectivo.
 
-    NUEVA_CONVOCATORIA: bases/convocatoria de plaza en propiedad o turno libre.
+    NUEVA_CONVOCATORIA: bases/convocatoria de una plaza administrativa.
     BOLSA_TEMPORAL: bolsa/interinidad; se conserva para decidir política aparte.
     SEGUIMIENTO: admitidos, tribunal, examen, nombramiento, correcciones, etc.
     EXCLUIDO_INTERNO: provisión/comisión/traslado/promoción interna.
@@ -117,12 +117,7 @@ def _clasificar_anuncio(titulo: str) -> str:
         "bases i la convocatoria", "bases y la convocatoria",
         "bases reguladores del procediment selectiu", "bases reguladoras del procedimiento selectivo",
     )
-    oportunidad = (
-        "en propietat", "en propiedad", "torn lliure", "turno libre",
-        "oposicio", "oposicion", "concurs oposicio", "concurso oposicion",
-        "places d'", "plazas de ", "placa d'", "plaza de ",
-    )
-    if any(x in n for x in bases) and any(x in n for x in oportunidad):
+    if any(x in n for x in bases):
         return "NUEVA_CONVOCATORIA"
 
     return "SEGUIMIENTO"
