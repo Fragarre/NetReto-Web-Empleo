@@ -129,13 +129,13 @@ def _extraer_plazas(titulo: str) -> int | None:
         "nou": 9, "nueve": 9,
         "deu": 10, "diez": 10,
     }
-    # Número explícito antes de plaça/places/plaza/plazas.
-    m = re.search(r"\b(\d+|una|un|dues|dos|tres|quatre|cuatro|cinc|cinco|sis|seis|set|siete|huit|vuit|ocho|nou|nueve|deu|diez)\s+(?:placa|places|plaza|plazas)\b", n)
+    # Número explícito antes de plaza(s) o puesto(s), en valenciano o castellano.
+    m = re.search(r"\b(\d+|una|un|dues|dos|tres|quatre|cuatro|cinc|cinco|sis|seis|set|siete|huit|vuit|ocho|nou|nueve|deu|diez)\s+(?:placa|places|plaza|plazas|lloc|llocs|puesto|puestos)\b", n)
     if m:
         valor = m.group(1)
         return int(valor) if valor.isdigit() else palabras.get(valor)
-    # Singular inequívoco con artículo definido: "la plaça" / "la plaza".
-    if re.search(r"\bla\s+(?:placa|plaza)\b", n):
+    # Singular inequívoco con artículo definido.
+    if re.search(r"\bla\s+(?:placa|plaza)\b", n) or re.search(r"\b(?:el|l['’])\s*(?:lloc|puesto)\b", n):
         return 1
     return None
 
