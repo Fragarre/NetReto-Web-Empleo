@@ -20,6 +20,24 @@ def _sin(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", (s or "").lower()) if unicodedata.category(c) != "Mn")
 
 
+def _reparar_mojibake_utf8(texto: str) -> str:
+    """Repara UTF-8 interpretado erróneamente como latin-1/cp1252.
+
+    Se aplica únicamente cuando aparecen marcadores típicos de mojibake.
+    Si la reconversión no es válida, devuelve el texto original.
+    """
+    if not texto or not any(m in texto for m in ("Ã", "Â", "â€", "â€™", "â€œ", "â€")):
+        return texto
+    for encoding in ("latin-1", "cp1252"):
+        try:
+            reparado = texto.encode(encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if reparado.count("Ã") + reparado.count("Â") < texto.count("Ã") + texto.count("Â"):
+            return reparado
+    return texto
+
+
 def _es_emisor_ayuntamiento(titulo: str) -> bool:
     """Evita falsos positivos donde Diputación cita a un ayuntamiento."""
     n = _sin(titulo).strip()
@@ -128,6 +146,7 @@ def _es_empleo_administrativo(titulo: str) -> bool:
 
 
 def _extraer_anuncios_municipales(html: str) -> list[dict[str, Any]]:
+    html = _reparar_mojibake_utf8(html)
     texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
     registro_patron = re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", re.I)
     resultados: list[dict[str, Any]] = []
