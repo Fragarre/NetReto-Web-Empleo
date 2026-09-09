@@ -25,14 +25,26 @@ def _sin(s: str) -> str:
 def _reparar_mojibake_utf8(texto: str) -> str:
     if not texto or not any(m in texto for m in ("Ã", "Â", "â€", "â€™", "â€œ", "â€")):
         return texto
-    for encoding in ("latin-1", "cp1252"):
-        try:
-            reparado = texto.encode(encoding).decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            continue
-        if reparado.count("Ã") + reparado.count("Â") < texto.count("Ã") + texto.count("Â"):
-            return reparado
-    return texto
+
+    def reparar_fragmento(fragmento: str) -> str:
+        if not any(m in fragmento for m in ("Ã", "Â", "â€", "â€™", "â€œ", "â€")):
+            return fragmento
+        for encoding in ("latin-1", "cp1252"):
+            try:
+                reparado = fragmento.encode(encoding).decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                continue
+            if reparado.count("Ã") + reparado.count("Â") + reparado.count("â") < fragmento.count("Ã") + fragmento.count("Â") + fragmento.count("â"):
+                return reparado
+        return fragmento
+
+    # Algunas páginas del BOP mezclan texto correcto y mojibake. Reparar el HTML
+    # completo puede fallar por un único carácter no representable; por eso se
+    # repara también por fragmentos delimitados por espacios.
+    reparado = reparar_fragmento(texto)
+    if reparado != texto:
+        return reparado
+    return re.sub(r"\S+", lambda m: reparar_fragmento(m.group(0)), texto)
 
 
 def _es_emisor_ayuntamiento(titulo: str) -> bool:
@@ -88,13 +100,14 @@ def _es_empleo_administrativo(titulo: str) -> bool:
 def _extraer_anuncios_municipales(html: str) -> list[dict[str, Any]]:
     html = _reparar_mojibake_utf8(html)
     texto = _bop._norm(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+    texto = _reparar_mojibake_utf8(texto)
     patron = re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", re.I)
     resultados, vistos = [], set()
     for mr in patron.finditer(texto):
         numero = mr.group(1)
         inicio = max(texto.rfind("Anunci",0,mr.start()), texto.rfind("Anuncio",0,mr.start()))
         if inicio < 0: continue
-        titulo = _bop._norm(texto[inicio:mr.start()]).rstrip(".") + "."
+        titulo = _reparar_mojibake_utf8(_bop._norm(texto[inicio:mr.start()]).rstrip(".") + ".")
         municipio = _municipio_desde_titulo(titulo)
         if not municipio or numero in vistos: continue
         vistos.add(numero)
@@ -149,11 +162,19 @@ def importar_municipales_bop(*, hasta: date, dias: int=30, aplicar: bool=False) 
             estable=f"BOPMUN:{h['registro']}"; cursor.execute("SELECT id FROM procesos WHERE identificador_estable=%s",(estable,)); ex=cursor.fetchone()
             if ex:
                 resultado["existentes"]+=1; resultado["detalle"].append({"registro":h["registro"],"estado":"EXISTENTE","proceso_id":ex["id"]}); continue
-            municipio=h["municipio_detectado"]; cursor.execute("SELECT id FROM organismos WHERE tipo='AYUNTAMIENTO' AND lower(COALESCE(municipio,''))=lower(%s) LIMIT 1",(municipio,)); org=cursor.fetchone()
+            municipio=h["municipio_detectado"]
+            cursor.execute("SELECT id,municipio,nombre FROM organismos WHERE tipo='AYUNTAMIENTO'")
+            org=None
+            for candidato in cursor.fetchall():
+                if _sin(candidato.get("municipio") or "") == _sin(municipio):
+                    org=candidato
+                    break
+            visible=h.get("municipio_visible") or _nombre_municipio(municipio)
             if org:
-                organismo_id=org["id"]; cursor.execute("UPDATE organismos SET activo=TRUE,updated_at=NOW() WHERE id=%s",(organismo_id,))
+                organismo_id=org["id"]
+                cursor.execute("UPDATE organismos SET nombre=%s,activo=TRUE,updated_at=NOW() WHERE id=%s",(f"Ayuntamiento de {visible}",organismo_id))
             else:
-                visible=h.get("municipio_visible") or _nombre_municipio(municipio); nombre=f"Ayuntamiento de {visible}"; cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id",(nombre,municipio)); organismo_id=cursor.fetchone()["id"]; resultado["organismos_creados"]+=1
+                nombre=f"Ayuntamiento de {visible}"; cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id",(nombre,municipio)); organismo_id=cursor.fetchone()["id"]; resultado["organismos_creados"]+=1
             cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,plazas,estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,ambito_administrativo,datos_json,updated_at) VALUES (%s,%s,%s,%s,%s,'EN_CURSO',%s,2,TRUE,'SI',%s,NOW()) RETURNING id",(organismo_id,h["registro"],estable,h["titulo"],_extraer_plazas(h["titulo"]),h["fecha_publicacion"],Jsonb({"url_oficial":h["url"],"bop_registro":h["registro"],"origen":"BOP_VALENCIA_MUNICIPAL"}))); pid=cursor.fetchone()["id"]
             resultado["nuevos"]+=1; resultado["detalle"].append({"registro":h["registro"],"estado":"NUEVO","proceso_id":pid,"municipio":municipio})
         connection.commit()
