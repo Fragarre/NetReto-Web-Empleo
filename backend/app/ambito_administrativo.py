@@ -18,8 +18,53 @@ def clasificar_ambito_administrativo(proceso: dict[str, Any]) -> str:
 
     Solo devuelve SI/NO cuando la denominación es suficientemente explícita.
     Los casos fronterizos permanecen en REVISION para decisión humana.
+    Las exclusiones específicas prevalecen sobre menciones genéricas a la
+    escala de administración general.
     """
     texto = _normalizar(" ".join(str(proceso.get(k) or "") for k in ("denominacion", "cuerpo_escala", "grupo")))
+
+    # Exclusiones claras. Se evalúan primero para evitar falsos positivos como
+    # "conserje-notificador, escala de administración general, subescala subalterna".
+    patrones_no = (
+        r"investigacion cientifica",
+        r"medicina(?: del trabajo)?",
+        r"metge(?:/ssa)? del treball",
+        r"enfermeria",
+        r"psicologia",
+        r"educacion especial",
+        r"educacio especial",
+        r"educacion infantil",
+        r"educacio infantil",
+        r"professor(?:/a)?",
+        r"profesor(?:/a)?",
+        r"veterinari",
+        r"ingenier",
+        r"enginyer",
+        r"arquitect",
+        r"laboratorio",
+        r"laboratori",
+        r"servicios auxiliares de la investigacion",
+        r"\bsubaltern(?:o|a|os|es)?\b",
+        r"\bconser(?:je|ge)(?:s)?\b",
+        r"\bnotificador(?:/a|a|es)?\b",
+        r"ayudante de residencia",
+        r"agricol",
+        r"forestal",
+        r"orientacion escolar",
+        r"orientacio escolar",
+        r"taller ocupacional",
+        r"obras publicas",
+        r"obres publiques",
+        r"mecanic",
+        r"conductor",
+        r"restaurador",
+        r"traductor",
+        r"linguistic",
+        r"delineant",
+        r"comunicacio audiovisual",
+    )
+    if any(re.search(p, texto) for p in patrones_no):
+        return "NO"
 
     # Cuerpos y perfiles administrativos en sentido amplio, en castellano y valenciano.
     patrones_si = (
@@ -54,46 +99,5 @@ def clasificar_ambito_administrativo(proceso: dict[str, Any]) -> str:
     )
     if any(re.search(p, texto) for p in patrones_si):
         return "SI"
-
-    # Exclusiones claras. No se usan términos genéricos que puedan aparecer
-    # incidentalmente en una denominación administrativa.
-    patrones_no = (
-        r"investigacion cientifica",
-        r"medicina(?: del trabajo)?",
-        r"metge(?:/ssa)? del treball",
-        r"enfermeria",
-        r"psicologia",
-        r"educacion especial",
-        r"educacio especial",
-        r"educacion infantil",
-        r"educacio infantil",
-        r"professor(?:/a)?",
-        r"profesor(?:/a)?",
-        r"veterinari",
-        r"ingenier",
-        r"enginyer",
-        r"arquitect",
-        r"laboratorio",
-        r"laboratori",
-        r"servicios auxiliares de la investigacion",
-        r"\bsubalternos?\b",
-        r"ayudante de residencia",
-        r"agricol",
-        r"forestal",
-        r"orientacion escolar",
-        r"orientacio escolar",
-        r"taller ocupacional",
-        r"obras publicas",
-        r"obres publiques",
-        r"mecanic",
-        r"conductor",
-        r"restaurador",
-        r"traductor",
-        r"linguistic",
-        r"delineant",
-        r"comunicacio audiovisual",
-    )
-    if any(re.search(p, texto) for p in patrones_no):
-        return "NO"
 
     return "REVISION"
