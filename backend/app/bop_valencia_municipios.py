@@ -129,12 +129,15 @@ def _extraer_plazas(titulo: str) -> int | None:
         "nou": 9, "nueve": 9,
         "deu": 10, "diez": 10,
     }
-    # Valenciano y castellano: plaça/places, plaza/plazas. _sin elimina los acentos.
+    # Número explícito antes de plaça/places/plaza/plazas.
     m = re.search(r"\b(\d+|una|un|dues|dos|tres|quatre|cuatro|cinc|cinco|sis|seis|set|siete|huit|vuit|ocho|nou|nueve|deu|diez)\s+(?:placa|places|plaza|plazas)\b", n)
-    if not m:
-        return None
-    valor = m.group(1)
-    return int(valor) if valor.isdigit() else palabras.get(valor)
+    if m:
+        valor = m.group(1)
+        return int(valor) if valor.isdigit() else palabras.get(valor)
+    # Singular inequívoco con artículo definido: "la plaça" / "la plaza".
+    if re.search(r"\bla\s+(?:placa|plaza)\b", n):
+        return 1
+    return None
 
 
 def importar_municipales_bop(*, hasta: date, dias: int=30, aplicar: bool=False) -> dict[str, Any]:
