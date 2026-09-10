@@ -146,6 +146,136 @@ def diagnostico_bop_municipios_crudo(fecha: date = Query(...), buscar: str | Non
         raise HTTPException(status_code=502, detail=f"Error en diagnóstico BOP municipal crudo: {exc}") from exc
 
 
+@router.post("/diagnostico/bop-municipios-paginas")
+def diagnostico_bop_municipios_paginas(fecha: date = Query(...), buscar: str | None = Query(default=None), x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    """SOLO LECTURA. Reproduce la búsqueda del BOP y prueba la paginación PrimeFaces del DataGrid list."""
+    _validar_import_secret(x_import_secret)
+    headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
+    try:
+        with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
+            r0 = client.get(_bop_patch.BOP_PORTAL_URL)
+            r0.raise_for_status()
+            soup0 = BeautifulSoup(r0.text, "html.parser")
+            form = soup0.find("form", id="j_idt235")
+            if form is None:
+                for candidato in soup0.find_all("form"):
+                    nombres = {i.get("name") for i in candidato.find_all("input") if i.get("name")}
+                    if "filtroCalendarioIni_input" in nombres and "filtroCalendarioFin_input" in nombres:
+                        form = candidato
+                        break
+            if form is None:
+                raise RuntimeError("No se encontró el formulario de búsqueda BOP")
+
+            data: dict[str, str] = {}
+            for element in form.find_all("input"):
+                name = element.get("name")
+                if not name:
+                    continue
+                typ = (element.get("type") or "").lower()
+                if typ in {"submit", "button", "image", "file", "reset"}:
+                    continue
+                if typ in {"checkbox", "radio"} and not element.has_attr("checked"):
+                    continue
+                data[name] = element.get("value") or "on"
+
+            fecha_txt = fecha.strftime("%d/%m/%Y")
+            data["filtroCalendarioIni_input"] = fecha_txt
+            data["filtroCalendarioFin_input"] = fecha_txt
+            action = form.get("action") or "/bop/xhtml/portal.xhtml"
+            if action.startswith("/"):
+                url = str(r0.url).split("/bop/", 1)[0] + action
+            else:
+                url = str(r0.url).rsplit("/", 1)[0] + "/" + action
+
+            filtro = dict(data)
+            filtro.update({
+                "javax.faces.partial.ajax": "true",
+                "javax.faces.source": "buscarBtn",
+                "javax.faces.partial.execute": "buscarBtn filtroCalendarioIni filtroCalendarioFin",
+                "javax.faces.partial.render": "messages boletines3 edictos",
+                "buscarBtn": "buscarBtn",
+            })
+            ajax_headers = {"Referer": str(r0.url), "Faces-Request": "partial/ajax", "X-Requested-With": "XMLHttpRequest", "Accept": "application/xml, text/xml, */*; q=0.01"}
+            r1 = client.post(url, data=filtro, headers=ajax_headers)
+            r1.raise_for_status()
+            html1 = _bop_patch._ajax_html(r1.text)
+
+            vm = re.search(r'<update id="javax\.faces\.ViewState"><!\[CDATA\[(.*?)\]\]></update>', r1.text, re.S)
+            if vm:
+                data["javax.faces.ViewState"] = vm.group(1)
+
+            sm = re.search(r'PrimeFaces\.cw\("DataGrid","list",\{id:"list",paginator:\{id:\[[^\]]+\],rows:(\d+),rowCount:(\d+),page:(\d+)', html1)
+            if not sm:
+                raise RuntimeError("No se pudo leer rows/rowCount/page del DataGrid list")
+            rows = int(sm.group(1))
+            row_count = int(sm.group(2))
+
+            paginas_html = [html1]
+            errores_paginas: list[dict[str, Any]] = []
+            for first in range(rows, row_count, rows):
+                pagina = dict(data)
+                pagina.update({
+                    "javax.faces.partial.ajax": "true",
+                    "javax.faces.source": "list",
+                    "javax.faces.behavior.event": "page",
+                    "javax.faces.partial.event": "page",
+                    "javax.faces.partial.execute": "list",
+                    "javax.faces.partial.render": "list",
+                    "list": "list",
+                    "list_pagination": "true",
+                    "list_first": str(first),
+                    "list_rows": str(rows),
+                    "list_skipChildren": "true",
+                    "list_encodeFeature": "true",
+                })
+                rp = client.post(url, data=pagina, headers=ajax_headers)
+                if rp.status_code != 200:
+                    errores_paginas.append({"first": first, "status": rp.status_code, "respuesta": rp.text[:500]})
+                    continue
+                htmlp = _bop_patch._ajax_html(rp.text)
+                paginas_html.append(htmlp)
+                vm = re.search(r'<update id="javax\.faces\.ViewState"><!\[CDATA\[(.*?)\]\]></update>', rp.text, re.S)
+                if vm:
+                    data["javax.faces.ViewState"] = vm.group(1)
+
+        patron = re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", re.I)
+        registros: list[dict[str, Any]] = []
+        vistos: set[str] = set()
+        por_pagina: list[int] = []
+        for numero_pagina, htmlp in enumerate(paginas_html, start=1):
+            texto = _bop._norm(BeautifulSoup(htmlp, "html.parser").get_text(" ", strip=True))
+            encontrados = 0
+            for mr in patron.finditer(texto):
+                registro = mr.group(1)
+                if registro in vistos:
+                    continue
+                inicio = max(texto.rfind("Anunci", 0, mr.start()), texto.rfind("Anuncio", 0, mr.start()))
+                if inicio < 0:
+                    continue
+                vistos.add(registro)
+                encontrados += 1
+                titulo = _bop._norm(texto[inicio:mr.start()]).rstrip(".") + "."
+                registros.append({"pagina": numero_pagina, "registro": registro, "titulo": titulo[:1200], "url": f"{_bop.DOWNLOAD_URL}?anuncioNumReg={registro}&lang=es"})
+            por_pagina.append(encontrados)
+
+        consulta = _bop._sin(buscar or "").strip()
+        coincidencias = [r for r in registros if not consulta or consulta in _bop._sin(r["titulo"])]
+        return {
+            "fecha": fecha.isoformat(),
+            "rows": rows,
+            "row_count": row_count,
+            "paginas_esperadas": (row_count + rows - 1) // rows,
+            "paginas_recibidas": len(paginas_html),
+            "registros_unicos": len(registros),
+            "registros_por_pagina": por_pagina,
+            "errores_paginas": errores_paginas,
+            "buscar": buscar,
+            "coincidencias": coincidencias[:100],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en diagnóstico de paginación BOP: {exc}") from exc
+
+
 @router.post("/diagnostico/boe-local")
 def diagnostico_boe_local(hasta: date = Query(...), dias: int = Query(default=30, ge=1, le=45), x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
     """Diagnóstico de convocatorias administrativas locales CV desde BOE. SOLO LECTURA."""
