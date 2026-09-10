@@ -13,6 +13,9 @@ _TERMINOS_NO_EMPLEO = (
     "concurso de meritos para cubrir el puesto", "concurso de méritos para cubrir el puesto",
     "concurs de merits per a la provisio", "concurs de mèrits per a la provisió",
     "concurso de meritos para la provision", "concurso de méritos para la provisión",
+    "lliure designacio", "lliure designació", "libre designacion", "libre designación",
+    "nomenament, per concurs de merits", "nomenament, per concurs de mèrits",
+    "nombramiento, por concurso de meritos", "nombramiento, por concurso de méritos",
 )
 
 _TERMINOS_EMPLEO = (
@@ -28,16 +31,22 @@ _TERMINOS_EMPLEO = (
     "tribunal calificador", "tribunal qualificador",
     "organo tecnico de seleccion", "organ tecnic de seleccio",
     "data d'examen", "fecha de examen", "primer ejercicio", "primer exercici",
-    "borsa de treball", "constitucio de borsa", "constitucion de bolsa",
+    "calificaciones", "qualificacions", "resultados", "resultats",
+    "lista de aprobados", "llista d'aprovats", "personas aprobadas", "persones aprovades",
+    "constitucio de borsa", "constitucion de bolsa",
+    "nombramiento", "nomenament", "toma de posesion", "presa de possessio",
 )
 
 
 def incluido_empleo_bop(titulo: str) -> bool:
-    """Acepta únicamente anuncios inequívocamente vinculados a empleo público."""
+    """Acepta anuncios inequívocamente vinculados a empleo público.
+
+    Los nombramientos de procesos selectivos pueden ser hitos finales y no se
+    descartan por el mero término 'nombramiento'. Las provisiones internas sí
+    se excluyen de forma expresa.
+    """
     n = _bop._sin(titulo)
     if any(_bop._sin(x) in n for x in _TERMINOS_NO_EMPLEO):
-        return False
-    if any(_bop._sin(x) in n for x in _bop.EXCLUIDOS):
         return False
     return any(_bop._sin(x) in n for x in _TERMINOS_EMPLEO)
 
