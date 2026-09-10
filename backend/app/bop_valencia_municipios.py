@@ -54,11 +54,7 @@ def _municipio_desde_titulo(titulo: str) -> str | None:
         return None
     n = _sin(titulo)
     fin = r"(?=\s+sobre\b|\s+per\s+a\b|\s+para\b|[.,;:]|$)"
-    for patron in (
-        rf"(?:ayuntamiento|ajuntament)\s+de\s+(.+?){fin}",
-        rf"(?:ayuntamiento|ajuntament)\s+del\s+(.+?){fin}",
-        rf"(?:ayuntamiento|ajuntament)\s+d['’]\s*(.+?){fin}",
-    ):
+    for patron in (rf"(?:ayuntamiento|ajuntament)\s+de\s+(.+?){fin}", rf"(?:ayuntamiento|ajuntament)\s+del\s+(.+?){fin}", rf"(?:ayuntamiento|ajuntament)\s+d['’]\s*(.+?){fin}"):
         m = re.search(patron, n, re.I)
         if m:
             return " ".join(m.group(1).split()).strip()[:120]
@@ -70,11 +66,7 @@ def _municipio_visible_desde_titulo(titulo: str) -> str | None:
         return None
     t = _reparar_mojibake_utf8(titulo)
     fin = r"(?=\s+sobre\b|\s+per\s+a\b|\s+para\b|[.,;:]|$)"
-    for patron in (
-        rf"(?:Ayuntamiento|Ajuntament)\s+de\s+(.+?){fin}",
-        rf"(?:Ayuntamiento|Ajuntament)\s+del\s+(.+?){fin}",
-        rf"(?:Ayuntamiento|Ajuntament)\s+d['’]\s*(.+?){fin}",
-    ):
+    for patron in (rf"(?:Ayuntamiento|Ajuntament)\s+de\s+(.+?){fin}", rf"(?:Ayuntamiento|Ajuntament)\s+del\s+(.+?){fin}", rf"(?:Ayuntamiento|Ajuntament)\s+d['’]\s*(.+?){fin}"):
         m = re.search(patron, t, re.I)
         if m:
             return " ".join(m.group(1).split()).strip()[:120]
@@ -87,7 +79,7 @@ def _es_perfil_administrativo(titulo: str) -> bool:
 
 def _clasificar_anuncio(titulo: str) -> str:
     n = _sin(titulo)
-    internos = ("libre designacion", "lliure designacio", "comision de servicios", "comissio de serveis", "concurso de traslados", "concurs de trasllats", "concurso especifico de meritos", "concurs especific de merits", "provision de puesto", "provisio de lloc", "provision del puesto", "provisio del lloc", "abierto a otras administraciones publicas", "obert a altres administracions publiques", "promocion interna", "promocio interna", "cesion de la bolsa", "cessio de la borsa", "conveni de collaboracio", "convenio de colaboracion")
+    internos = ("libre designacion", "lliure designacio", "comision de servicios", "comissio de serveis", "concurso de traslados", "concurs de trasllats", "concurso especifico de meritos", "concurs especific de merits", "provision de puesto", "provisio de lloc", "provision del puesto", "provisio del lloc", "abierto a otras administraciones publicas", "obert a altres administracions publiques", "promocion interna", "promocio interna", "cesion de la bolsa", "cessio de la borsa", "cessio de les borses", "cesion de bolsas", "conveni de collaboracio", "conveni de col·laboracio", "convenio de colaboracion")
     if any(x in n for x in internos):
         return "EXCLUIDO_INTERNO"
     ruido = ("subvencion", "subvencio", "premio", "premi", "ayuda", "ajuda", "ordenanza fiscal", "ordenanca fiscal", "tasa", "taxa", "gestion tributaria", "gestio tributaria", "recaptacio", "recaudacion")
@@ -184,6 +176,28 @@ def _familia_perfil(titulo: str) -> str | None:
     return None
 
 
+def _extraer_codigo_proceso(titulo: str) -> str | None:
+    n = _sin(titulo)
+    patrones = (
+        r"\b(?:expedient|expediente)\s*(?:num\.?|n[uú]m\.?|numero)?\s*[:.-]?\s*([a-z0-9][a-z0-9._/-]{3,})",
+        r"\b(?:codi|codigo)\s+(?:de\s+)?(?:convocatoria|convocatoria)\s*[:.-]?\s*([a-z0-9][a-z0-9._/-]{3,})",
+    )
+    for patron in patrones:
+        m = re.search(patron, n, re.I)
+        if m:
+            return m.group(1).rstrip(".,;:").upper()
+    return None
+
+
+def _es_seguimiento_selectivo_claro(titulo: str) -> bool:
+    n = _sin(titulo)
+    ajeno = ("cessio de la borsa", "cessio de les borses", "cesion de la bolsa", "cesion de bolsas", "conveni de collaboracio", "conveni de col·laboracio", "convenio de colaboracion")
+    if any(x in n for x in ajeno):
+        return False
+    hitos = ("relacio provisional", "relacion provisional", "relacio definitiva", "relacion definitiva", "admeses", "admesos", "admitidos", "admitidas", "exclosos", "excloses", "excluidos", "excluidas", "tribunal qualificador", "tribunal calificador", "organ tecnic de seleccio", "organo tecnico de seleccion", "primer exercici", "primer ejercicio", "data de l'exercici", "fecha del ejercicio", "persona aprovada", "persones aprovades", "resultats", "resultados", "proposta de nomenament", "propuesta de nombramiento", "correccio d'errors", "correccion de errores", "acumulacio de places", "acumulacion de plazas", "nomenament com a funcionari", "nombramiento como funcionario", "nombramiento como funcionaria")
+    return any(x in n for x in hitos)
+
+
 def _es_finalizacion(titulo: str) -> bool:
     n = _sin(titulo)
     finales = ("nomenament com a funcionari", "nombramiento como funcionario", "nombramiento como funcionaria", "presa de possessio", "toma de posesion", "finalitzacio del proces selectiu", "finalizacion del proceso selectivo")
@@ -194,6 +208,9 @@ def _buscar_proceso_seguimiento(cursor, hallazgo: dict[str, Any]) -> tuple[dict[
     familia = _familia_perfil(hallazgo["titulo"])
     if not familia:
         return None, "SIN_FAMILIA"
+    if not _es_seguimiento_selectivo_claro(hallazgo["titulo"]):
+        return None, "NO_ES_CONTINUIDAD_SELECTIVA"
+    codigo_seguimiento = _extraer_codigo_proceso(hallazgo["titulo"])
     cursor.execute(
         """
         SELECT p.id,p.denominacion,p.plazas,p.estado,p.fecha_convocatoria,o.municipio
@@ -214,11 +231,18 @@ def _buscar_proceso_seguimiento(cursor, hallazgo: dict[str, Any]) -> tuple[dict[
         if _familia_perfil(p.get("denominacion") or "") != familia:
             continue
         candidatos.append(p)
-    if len(candidatos) == 1:
-        return candidatos[0], "UNICO"
     if not candidatos:
         return None, "SIN_COINCIDENCIA"
-    return None, "AMBIGUO"
+    if codigo_seguimiento:
+        por_codigo = [p for p in candidatos if _extraer_codigo_proceso(p.get("denominacion") or "") == codigo_seguimiento]
+        if len(por_codigo) == 1:
+            return por_codigo[0], "CODIGO_EXACTO"
+        if len(por_codigo) > 1:
+            return None, "CODIGO_AMBIGUO"
+        return None, "CODIGO_SIN_COINCIDENCIA"
+    if len(candidatos) == 1:
+        return candidatos[0], "UNICO_HITO_SELECTIVO"
+    return None, "AMBIGUO_SIN_CODIGO"
 
 
 def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = False) -> dict[str, Any]:
@@ -252,10 +276,7 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                     cursor.execute("SELECT id FROM publicaciones WHERE fuente_id=2 AND referencia=%s LIMIT 1", (h["registro"],))
                     pub = cursor.fetchone()
                     if not pub:
-                        cursor.execute(
-                            "INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at) VALUES (%s,2,%s,'BOP',%s,%s,%s,%s,NOW()) RETURNING id",
-                            (proceso["id"], h["registro"], h["titulo"], h["fecha_publicacion"], h["url"], Jsonb({"origen": "BOP_VALENCIA_MUNICIPAL", "clase": "SEGUIMIENTO"})),
-                        )
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at) VALUES (%s,2,%s,'BOP',%s,%s,%s,%s,NOW()) RETURNING id", (proceso["id"], h["registro"], h["titulo"], h["fecha_publicacion"], h["url"], Jsonb({"origen": "BOP_VALENCIA_MUNICIPAL", "clase": "SEGUIMIENTO"})))
                         item["publicacion_id"] = cursor.fetchone()["id"]
                     else:
                         item["publicacion_id"] = pub["id"]
@@ -299,10 +320,7 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                 cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id", (nombre, municipio))
                 organismo_id = cursor.fetchone()["id"]
                 resultado["organismos_creados"] += 1
-            cursor.execute(
-                "INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,plazas,estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,ambito_administrativo,datos_json,updated_at) VALUES (%s,%s,%s,%s,%s,'EN_CURSO',%s,2,TRUE,'SI',%s,NOW()) RETURNING id",
-                (organismo_id, h["registro"], estable, h["titulo"], _extraer_plazas(h["titulo"]), h["fecha_publicacion"], Jsonb({"url_oficial": h["url"], "bop_registro": h["registro"], "origen": "BOP_VALENCIA_MUNICIPAL"})),
-            )
+            cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,plazas,estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,ambito_administrativo,datos_json,updated_at) VALUES (%s,%s,%s,%s,%s,'EN_CURSO',%s,2,TRUE,'SI',%s,NOW()) RETURNING id", (organismo_id, h["registro"], estable, h["titulo"], _extraer_plazas(h["titulo"]), h["fecha_publicacion"], Jsonb({"url_oficial": h["url"], "bop_registro": h["registro"], "origen": "BOP_VALENCIA_MUNICIPAL"})))
             pid = cursor.fetchone()["id"]
             resultado["nuevos"] += 1
             resultado["detalle"].append({"registro": h["registro"], "clase": "NUEVA_CONVOCATORIA", "estado": "NUEVO", "proceso_id": pid, "municipio": municipio})
