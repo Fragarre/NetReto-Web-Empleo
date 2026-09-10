@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 from .database import get_connection
 
 GVA_ORGANISMO_ID = 1
-FECHA_CORTE = date(2026, 1, 1)
 EXTERNOS_GVA_DETECTADOS = (
     "97686", "103850", "103891", "104127", "104146", "104318",
     "105609", "105610", "113676", "113692", "113753", "113762",
@@ -15,10 +13,12 @@ EXTERNOS_GVA_DETECTADOS = (
 
 
 def limpiar_gva_stale() -> dict[str, Any]:
-    """Elimina del catálogo GVA procesos antiguos o externos ya detectados.
+    """Elimina únicamente fichas GVA confirmadas como ajenas al ámbito.
 
-    Los procesos con suscripciones activas se conservan y se devuelven como
-    bloqueados para evitar pérdida de referencias de usuarios.
+    La antigüedad, el año de convocatoria y el cierre del plazo de solicitudes
+    no son motivos de baja: una convocatoria se conserva mientras su proceso
+    selectivo siga activo. Los procesos con suscripciones activas tampoco se
+    eliminan automáticamente.
     """
     resultado: dict[str, Any] = {
         "candidatos": 0,
@@ -43,14 +43,10 @@ def limpiar_gva_stale() -> dict[str, Any]:
                       OR LOWER(COALESCE(datos_json->>'organismo_detectado', '')) LIKE '%%justicia%%'
                       OR LOWER(COALESCE(datos_json->>'organismo_detectado', '')) LIKE '%%istecdigital%%'
                       OR LOWER(COALESCE(datos_json->>'organismo_detectado', '')) LIKE '%%iislafe%%'
-                      OR (
-                          COALESCE(anio_convocatoria, 0) NOT IN (2026, 2027)
-                          AND (ultima_publicacion_at IS NULL OR ultima_publicacion_at < %s)
-                      )
                   )
                 ORDER BY id
                 """,
-                (GVA_ORGANISMO_ID, list(EXTERNOS_GVA_DETECTADOS), FECHA_CORTE),
+                (GVA_ORGANISMO_ID, list(EXTERNOS_GVA_DETECTADOS)),
             )
             candidatos = cursor.fetchall()
             resultado["candidatos"] = len(candidatos)
@@ -69,10 +65,7 @@ def limpiar_gva_stale() -> dict[str, Any]:
                     continue
 
                 id_emp = str((datos or {}).get("id_emp", ""))
-                motivo = "organismo_externo" if id_emp in EXTERNOS_GVA_DETECTADOS else "fuera_ambito"
-                if (datos or {}).get("organismo_motivo") == "organismo_externo":
-                    motivo = "organismo_externo"
-
+                motivo = "organismo_externo"
                 cursor.execute(
                     "DELETE FROM notificaciones WHERE cambio_id IN (SELECT id FROM cambios WHERE proceso_id = %s)",
                     (proceso_id,),

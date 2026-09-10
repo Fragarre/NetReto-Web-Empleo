@@ -6,6 +6,8 @@ import re
 from . import bop_valencia as _bop
 from .database import get_connection
 
+_BASE_IMPORTAR_BOP = _bop.importar_bop_valencia
+
 
 def _es_convocatoria_base(titulo: str, texto: str) -> bool:
     """Distingue bases/convocatoria de publicaciones posteriores del proceso."""
@@ -61,12 +63,7 @@ def _familia_perfil(texto: str) -> str | None:
 
 
 def _identificador_estable(titulo: str, texto: str) -> str:
-    """Usa el código de convocatoria, separando colisiones reales de perfiles.
-
-    Diputación puede reutilizar un mismo código para procesos distintos. Se
-    mantiene el identificador histórico cuando el perfil coincide; solo se
-    añade sufijo cuando ya existe ese código para otra familia inequívoca.
-    """
+    """Usa el código de convocatoria, separando colisiones reales de perfiles."""
     contenido = titulo + " " + texto
     convocatoria = _bop._convocatoria(contenido)
     if not convocatoria:
@@ -94,7 +91,74 @@ def _identificador_estable(titulo: str, texto: str) -> str:
     return f"{base}:{sufijo}"
 
 
+_TERMINALES = (
+    "finalizacion del proceso selectivo", "finalitzacio del proces selectiu",
+    "desistimiento del proceso selectivo", "desistiment del proces selectiu",
+    "nombramiento como funcionario", "nombramiento de funcionario",
+    "nomenament com a funcionari", "nomenament de funcionari",
+    "toma de posesion", "presa de possessio",
+    "adjudicacion de destinos", "adjudicacio de destinacions",
+)
+
+
+def _es_publicacion_terminal(titulo: str | None, contenido: str | None) -> bool:
+    n = _bop._sin(f"{titulo or ''} {contenido or ''}")
+    return any(_bop._sin(x) in n for x in _TERMINALES)
+
+
+def _postprocesar_estado_terminal() -> int:
+    """Cierra procesos solo con evidencia oficial terminal, aunque luego haya correcciones."""
+    finalizados = 0
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT p.id, p.estado, pub.id, pub.titulo, pub.contenido_texto
+            FROM procesos p
+            JOIN LATERAL (
+                SELECT id,titulo,contenido_texto,fecha_publicacion
+                FROM publicaciones
+                WHERE proceso_id=p.id
+                ORDER BY fecha_publicacion DESC NULLS LAST,id DESC
+            ) pub ON TRUE
+            WHERE p.identificador_estable LIKE 'DVAL:%%'
+              AND COALESCE(LOWER(p.estado),'') NOT IN ('finalizado','cancelado','desistido')
+            ORDER BY p.id, pub.fecha_publicacion DESC NULLS LAST, pub.id DESC
+            """
+        )
+        terminal_por_proceso: dict[int, tuple[str, int]] = {}
+        for proceso_id, estado_anterior, publicacion_id, titulo, contenido in cursor.fetchall():
+            if proceso_id in terminal_por_proceso:
+                continue
+            if _es_publicacion_terminal(titulo, contenido):
+                terminal_por_proceso[proceso_id] = (estado_anterior, publicacion_id)
+
+        for proceso_id, (estado_anterior, publicacion_id) in terminal_por_proceso.items():
+            cursor.execute(
+                "UPDATE procesos SET estado='FINALIZADO',updated_at=NOW() WHERE id=%s AND COALESCE(LOWER(estado),'') <> 'finalizado'",
+                (proceso_id,),
+            )
+            if not cursor.rowcount:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO cambios (proceso_id,publicacion_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo)
+                VALUES (%s,%s,'ACTUALIZACION','estado',%s,'FINALIZADO','Proceso selectivo finalizado según publicación oficial',TRUE)
+                """,
+                (proceso_id, publicacion_id, estado_anterior),
+            )
+            finalizados += 1
+        connection.commit()
+    return finalizados
+
+
+def _importar_con_integridad(historico: bool = False, dias: int = 1):
+    stats = _BASE_IMPORTAR_BOP(historico=historico, dias=dias)
+    stats["procesos_finalizados"] = _postprocesar_estado_terminal()
+    return stats
+
+
 def aplicar_integridad_bop() -> None:
     _bop._es_convocatoria_base = _es_convocatoria_base
     _bop._tipo_publicacion = lambda titulo, texto: "CONVOCATORIA" if _es_convocatoria_base(titulo, texto) else "BOP"
     _bop._identificador_estable = _identificador_estable
+    _bop.importar_bop_valencia = _importar_con_integridad
