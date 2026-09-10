@@ -53,15 +53,15 @@ def _sin(s: str) -> str:
     return base._sin_acentos(s or "")
 
 
-def _tipo_convocatoria(titulo: str) -> str | None:
-    n = _sin(titulo).lower()
+def _tipo_convocatoria(texto: str) -> str | None:
+    n = _sin(texto).lower()
     if any(p in n for p in PATRONES_BOLSA_NO_OPORTUNIDAD):
         return "Consulta administrativa"
-    return _BASE_TIPO_CONVOCATORIA(titulo)
+    return _BASE_TIPO_CONVOCATORIA(texto)
 
 
-def _turno(titulo: str) -> str | None:
-    return _BASE_TURNO(titulo)
+def _turno(texto: str) -> str | None:
+    return _BASE_TURNO(texto)
 
 
 def _es_incluido(tipo: str | None) -> bool:
@@ -97,7 +97,8 @@ def _etapa_actual(texto: str) -> str | None:
 
 
 def _estado_plazo_solicitud(texto: str) -> str | None:
-    n = _sin(texto)
+    cabecera = texto.split("Información básica", 1)[0].split("Informació bàsica", 1)[0]
+    n = _sin(cabecera)
     if "plazo abierto" in n:
         return "ABIERTO"
     if "plazo cerrado" in n:
@@ -182,8 +183,8 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     texto = base._normalizar(soup.get_text(" ", strip=True))
     titulo = str(proceso.get("denominacion") or "")
-    proceso["tipo_proceso"] = _tipo_convocatoria(titulo)
-    proceso["turno"] = _turno(titulo)
+    proceso["tipo_proceso"] = proceso.get("tipo_proceso") or _tipo_convocatoria(texto)
+    proceso["turno"] = _turno(titulo) or proceso.get("turno") or _turno(texto)
 
     organismo_id, motivo, organismo_enlace = _resolver_organismo(proceso)
     organismo_texto = str(proceso.get("organismo") or proceso.get("datos_json", {}).get("organismo_detectado") or "")
