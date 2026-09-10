@@ -68,6 +68,22 @@ def _muestra_diario(data: dict[str, Any]) -> dict[str, Any]:
             }
             for s in primeras
         ]
+        seccion_2b = next((s for s in _lista(seccion) if isinstance(s, dict) and str(s.get("codigo") or "").strip() == "2B"), None)
+        if isinstance(seccion_2b, dict):
+            departamentos = _lista(seccion_2b.get("departamento"))
+            muestra["seccion_2b"] = {
+                "nombre": seccion_2b.get("nombre"),
+                "tipo_departamento": type(seccion_2b.get("departamento")).__name__,
+                "cantidad_departamentos": len(departamentos),
+                "departamentos": [
+                    {
+                        "claves": list(d.keys()) if isinstance(d, dict) else [],
+                        "codigo": d.get("codigo") if isinstance(d, dict) else None,
+                        "nombre": d.get("nombre") if isinstance(d, dict) else None,
+                    }
+                    for d in departamentos
+                ],
+            }
     else:
         muestra["valor_primer_diario"] = str(primero)[:500]
     return muestra
