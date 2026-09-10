@@ -60,7 +60,13 @@ def _ajax_html(response_text: str) -> str:
     return "\n".join(u.decode_contents() for u in soup.find_all("update"))
 
 
+def _view_state(response_text: str) -> str | None:
+    m = re.search(r'<update id="javax\.faces\.ViewState"><!\[CDATA\[(.*?)\]\]></update>', response_text, re.S)
+    return m.group(1) if m else None
+
+
 def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None, str | None]:
+    """Obtiene todos los registros publicados en una fecha, recorriendo el DataGrid PrimeFaces completo."""
     try:
         r0 = client.get(BOP_PORTAL_URL)
         r0.raise_for_status()
@@ -75,6 +81,7 @@ def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None
                     break
         if form is None:
             return fecha, None, f"No se encontró formulario de búsqueda; url={r0.url}; status={r0.status_code}; forms={[f.get('id') for f in forms]}; html={len(r0.text)}"
+
         data: dict[str, str] = {}
         for element in form.find_all("input"):
             name = element.get("name")
@@ -86,22 +93,70 @@ def _obtener_pagina(client: httpx.Client, fecha: date) -> tuple[date, str | None
             if typ in {"checkbox", "radio"} and not element.has_attr("checked"):
                 continue
             data[name] = element.get("value") or "on"
+
         fecha_txt = fecha.strftime("%d/%m/%Y")
         data["filtroCalendarioIni_input"] = fecha_txt
         data["filtroCalendarioFin_input"] = fecha_txt
-        data["javax.faces.partial.ajax"] = "true"
-        data["javax.faces.source"] = "buscarBtn"
-        data["javax.faces.partial.execute"] = "buscarBtn filtroCalendarioIni filtroCalendarioFin"
-        data["javax.faces.partial.render"] = "messages boletines3 edictos"
-        data["buscarBtn"] = "buscarBtn"
         action = form.get("action") or "/bop/xhtml/portal.xhtml"
         if action.startswith("/"):
             url = str(r0.url).split("/bop/", 1)[0] + action
         else:
             url = str(r0.url).rsplit("/", 1)[0] + "/" + action
-        r = client.post(url, data=data, headers={"Referer": str(r0.url), "Faces-Request": "partial/ajax", "X-Requested-With": "XMLHttpRequest", "Accept": "application/xml, text/xml, */*; q=0.01"})
+
+        ajax_headers = {
+            "Referer": str(r0.url),
+            "Faces-Request": "partial/ajax",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/xml, text/xml, */*; q=0.01",
+        }
+        filtro = dict(data)
+        filtro.update({
+            "javax.faces.partial.ajax": "true",
+            "javax.faces.source": "buscarBtn",
+            "javax.faces.partial.execute": "buscarBtn filtroCalendarioIni filtroCalendarioFin",
+            "javax.faces.partial.render": "messages boletines3 edictos",
+            "buscarBtn": "buscarBtn",
+        })
+        r = client.post(url, data=filtro, headers=ajax_headers)
         r.raise_for_status()
-        return fecha, _ajax_html(r.text), None
+        html_primera = _ajax_html(r.text)
+        paginas = [html_primera]
+
+        vs = _view_state(r.text)
+        if vs:
+            data["javax.faces.ViewState"] = vs
+
+        sm = re.search(
+            r'PrimeFaces\.cw\("DataGrid","list",\{id:"list",paginator:\{id:\[[^\]]+\],rows:(\d+),rowCount:(\d+),page:(\d+)',
+            html_primera,
+        )
+        if sm:
+            rows = int(sm.group(1))
+            row_count = int(sm.group(2))
+            for first in range(rows, row_count, rows):
+                pagina = dict(data)
+                pagina.update({
+                    "javax.faces.partial.ajax": "true",
+                    "javax.faces.source": "list",
+                    "javax.faces.behavior.event": "page",
+                    "javax.faces.partial.event": "page",
+                    "javax.faces.partial.execute": "list",
+                    "javax.faces.partial.render": "list",
+                    "list": "list",
+                    "list_pagination": "true",
+                    "list_first": str(first),
+                    "list_rows": str(rows),
+                    "list_skipChildren": "true",
+                    "list_encodeFeature": "true",
+                })
+                rp = client.post(url, data=pagina, headers=ajax_headers)
+                rp.raise_for_status()
+                paginas.append(_ajax_html(rp.text))
+                vs = _view_state(rp.text)
+                if vs:
+                    data["javax.faces.ViewState"] = vs
+
+        return fecha, "\n".join(paginas), None
     except Exception as exc:
         return fecha, None, str(exc)
 
