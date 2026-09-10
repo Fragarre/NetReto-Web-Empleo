@@ -289,6 +289,62 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
 
 
 def diagnosticar_bop(client: httpx.Client, fecha: str | None = None) -> dict[str, Any]:
+    if fecha and re.fullmatch(r"\d{4}/\d+", fecha.strip()):
+        registro = fecha.strip()
+        url = f"{_bop.DOWNLOAD_URL}?anuncioNumReg={quote(registro)}&lang=es"
+        r = client.get(url)
+        r.raise_for_status()
+        content_type = r.headers.get("content-type") or ""
+        es_pdf = r.content.startswith(b"%PDF") or "pdf" in content_type.lower()
+        resultado: dict[str, Any] = {
+            "registro": registro,
+            "url": str(r.url),
+            "status": r.status_code,
+            "content_type": content_type,
+            "bytes": len(r.content),
+            "es_pdf": es_pdf,
+        }
+        if not es_pdf:
+            resultado["respuesta_inicio"] = r.text[:2000]
+            return resultado
+        try:
+            import fitz
+            documento = fitz.open(stream=r.content, filetype="pdf")
+            paginas = [pagina.get_text("text") for pagina in documento]
+            texto = "\n".join(paginas)
+            normalizado = _bop._norm(texto)
+            terminos = (
+                "publicar", "publicará", "publicaran", "publicarán", "publicació", "publicación",
+                "tauler", "tablón", "sede electrónica", "seu electrònica", "web municipal", "pàgina web",
+                "anuncios sucesivos", "successius anuncis", "restantes anuncios", "següents anuncis",
+            )
+            fragmentos: list[str] = []
+            texto_busqueda = normalizado.lower()
+            posiciones: list[int] = []
+            for termino in terminos:
+                inicio = 0
+                termino_n = _bop._norm(termino).lower()
+                while True:
+                    pos = texto_busqueda.find(termino_n, inicio)
+                    if pos < 0:
+                        break
+                    posiciones.append(pos)
+                    inicio = pos + len(termino_n)
+            for pos in sorted(set(posiciones)):
+                frag = normalizado[max(0, pos - 450): min(len(normalizado), pos + 900)].strip()
+                if frag and all(frag not in existente and existente not in frag for existente in fragmentos):
+                    fragmentos.append(frag)
+            resultado.update({
+                "paginas": len(paginas),
+                "texto_len": len(normalizado),
+                "texto_inicio": normalizado[:4000],
+                "fragmentos_publicacion": fragmentos[:20],
+            })
+            return resultado
+        except Exception as exc:
+            resultado["error_extraccion"] = f"{type(exc).__name__}: {exc}"
+            return resultado
+
     if fecha:
         try:
             fecha_obj = date.fromisoformat(fecha)
