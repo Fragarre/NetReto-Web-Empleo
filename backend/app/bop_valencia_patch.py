@@ -222,20 +222,12 @@ def _grupo_subgrupo_corregida(s: str) -> tuple[str | None, str | None]:
     return subgrupo[0], subgrupo
 
 
-# Estas funciones son usadas internamente por el importador base.
 _bop._convocatoria = _convocatoria_corregida
 _bop._plazas = _plazas_corregida
 _bop._grupo_subgrupo = _grupo_subgrupo_corregida
 
 
 def _postprocesar_ambito_y_cambios() -> tuple[int, int]:
-    """Alinea Diputación con las reglas consolidadas del catálogo.
-
-    - clasifica solo procesos que continúan en REVISION;
-    - no sobrescribe decisiones manuales SI/NO;
-    - desactiva como novedad los enriquecimientos iniciales NULL -> valor;
-    - conserva como significativas las publicaciones oficiales nuevas.
-    """
     clasificados = 0
     cambios_tecnicos = 0
     with get_connection() as connection, connection.cursor() as cursor:
@@ -332,6 +324,46 @@ def _extraer_pdf_diagnostico(r: httpx.Response, *, origen: str, referencia: str)
             frag = normalizado[max(0, pos - 450): min(len(normalizado), pos + 900)].strip()
             if frag and all(frag not in existente and existente not in frag for existente in fragmentos):
                 fragmentos.append(frag)
+
+        secciones: dict[str, str] = {}
+        if origen == "DOGV" and referencia == "2020/188":
+            objetivos = (
+                "Base séptima", "Base setena", "Base octava", "Base huitena",
+                "Base novena", "Base desena", "Base décima", "Base undécima",
+                "Base duodécima", "Base decimotercera",
+            )
+            busqueda_lower = normalizado.lower()
+            for objetivo in objetivos:
+                objetivo_n = _bop._norm(objetivo)
+                pos = busqueda_lower.find(objetivo_n.lower())
+                if pos >= 0 and objetivo not in secciones:
+                    secciones[objetivo] = normalizado[pos:min(len(normalizado), pos + 7000)]
+
+            terminos_dirigidos = (
+                "calificaciones", "calificación", "resultado", "resultados", "ejercicio",
+                "ejercicios", "tablón", "web municipal", "página web", "publicará", "publicarán",
+                "anuncios", "convocatoria del siguiente ejercicio", "llamamiento",
+            )
+            fragmentos_dirigidos: list[str] = []
+            inicio_busqueda = 0
+            marcas_base7 = [busqueda_lower.find(_bop._norm(x).lower()) for x in ("Base séptima", "Base setena")]
+            marcas_base7 = [x for x in marcas_base7 if x >= 0]
+            if marcas_base7:
+                inicio_busqueda = min(marcas_base7)
+            for termino in terminos_dirigidos:
+                tn = _bop._norm(termino).lower()
+                inicio = inicio_busqueda
+                while True:
+                    pos = busqueda_lower.find(tn, inicio)
+                    if pos < 0:
+                        break
+                    frag = normalizado[max(inicio_busqueda, pos - 700):min(len(normalizado), pos + 1400)].strip()
+                    if frag and all(frag not in existente and existente not in frag for existente in fragmentos_dirigidos):
+                        fragmentos_dirigidos.append(frag)
+                    inicio = pos + len(tn)
+            resultado["secciones_bases"] = secciones
+            resultado["fragmentos_seguimiento"] = fragmentos_dirigidos[:40]
+
         resultado.update({
             "paginas": len(paginas),
             "texto_len": len(normalizado),
