@@ -259,9 +259,14 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                     ) VALUES (%s,9,%s,'BOE',%s,%s,%s,%s,NOW())
                     """,
                     (
-                        proceso_id, convocatoria.get("boe_id"), convocatoria.get("denominacion"),
+                        proceso_id, codigo, convocatoria.get("denominacion"),
                         convocatoria.get("fecha_boe"), url,
-                        Jsonb({"origen": "BOE_LOCAL", "codigo_externo": codigo, "bases_bop": convocatoria.get("bases_bop")}),
+                        Jsonb({
+                            "origen": "BOE_LOCAL",
+                            "boe_id": convocatoria.get("boe_id"),
+                            "codigo_externo": codigo,
+                            "bases_bop": convocatoria.get("bases_bop"),
+                        }),
                     ),
                 )
                 resultado["publicaciones_creadas"] += 1
