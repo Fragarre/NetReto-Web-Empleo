@@ -26,15 +26,30 @@ PATRONES_TITULO_EXCLUIDOS = (
     "concurso de méritos para cubrir", "concurso de meritos para cubrir",
 )
 
+ESTADOS_TERMINALES = (
+    "finalizado",
+    "finalitzado",
+    "finalitzat",
+    "cancelado",
+    "cancel·lado",
+    "cancel·lat",
+    "desistido",
+    "desistit",
+    "anulado",
+    "anul·lat",
+)
+
 
 def _condiciones_exclusion() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
+    placeholders_estado = ", ".join(["%s"] * len(ESTADOS_TERMINALES))
     condiciones = ["p.es_oportunidad = TRUE", "p.ambito_administrativo = 'SI'"]
     condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
     condiciones.append("COALESCE(UPPER(p.turno), '') <> 'PROMOCION_INTERNA'")
-    # El cierre de inscripción no finaliza el proceso selectivo.
-    condiciones.append("COALESCE(LOWER(p.estado), '') NOT IN ('cerrado', 'finalizado')")
-    params: list[Any] = list(TIPOS_EXCLUIDOS)
+    # fecha_cierre y el estado de un plazo de solicitud no finalizan el proceso selectivo.
+    # Solo desaparece del catálogo cuando una fuente oficial acredita un estado terminal.
+    condiciones.append(f"COALESCE(LOWER(p.estado), '') NOT IN ({placeholders_estado})")
+    params: list[Any] = list(TIPOS_EXCLUIDOS) + list(ESTADOS_TERMINALES)
     for patron in PATRONES_TITULO_EXCLUIDOS:
         condiciones.append("POSITION(%s IN LOWER(COALESCE(p.denominacion, ''))) = 0")
         params.append(patron)
