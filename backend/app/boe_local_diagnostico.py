@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from html import unescape
+import re
 from typing import Any
 
 import httpx
@@ -8,6 +10,7 @@ import httpx
 from .ambito_administrativo import clasificar_ambito_administrativo
 
 BOE_SUMARIO = "https://www.boe.es/datosabiertos/api/boe/sumario/{fecha}"
+BOE_TEXTO = "https://www.boe.es/diario_boe/txt.php?id={ident}"
 SECCION_OPOSICIONES_CODIGO = "2B"
 DEPARTAMENTO_LOCAL_CODIGO = "9525"
 PROVINCIAS = ("alicante", "castellon", "castellón", "valencia", "valència")
@@ -46,6 +49,16 @@ def _iter_items_locales(data: dict[str, Any]):
                             yield nombre_seccion, nombre_departamento, nombre_epigrafe, item
 
 
+def _texto_documento_boe(client: httpx.Client, ident: str) -> str:
+    r = client.get(BOE_TEXTO.format(ident=ident))
+    r.raise_for_status()
+    texto = re.sub(r"<script\b[^>]*>.*?</script>", " ", r.text, flags=re.I | re.S)
+    texto = re.sub(r"<style\b[^>]*>.*?</style>", " ", texto, flags=re.I | re.S)
+    texto = re.sub(r"<[^>]+>", " ", texto)
+    texto = unescape(texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
 def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict[str, Any]:
     """SOLO LECTURA. Diagnóstico por etapas de convocatorias locales CV desde BOE."""
     hasta = hasta or date.today()
@@ -55,6 +68,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
     vistos: set[str] = set()
     items_locales = 0
     candidatos_cv = 0
+    documentos_leidos = 0
     descartados_ambito: list[dict[str, str]] = []
     headers = {
         "Accept": "application/json",
@@ -88,9 +102,28 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                     continue
                 candidatos_cv += 1
 
-                ambito = clasificar_ambito_administrativo(
+                ambito_sumario = clasificar_ambito_administrativo(
                     {"denominacion": f"{epigrafe}. {titulo}", "cuerpo_escala": None, "grupo": None}
                 )
+                ambito = ambito_sumario
+                fuente_ambito = "SUMARIO"
+                texto_documento = ""
+
+                if ambito_sumario != "SI":
+                    try:
+                        texto_documento = _texto_documento_boe(client, ident)
+                        documentos_leidos += 1
+                        ambito = clasificar_ambito_administrativo(
+                            {"denominacion": texto_documento, "cuerpo_escala": None, "grupo": None}
+                        )
+                        fuente_ambito = "DOCUMENTO_BOE"
+                    except Exception as exc:
+                        errores.append({
+                            "fecha": fecha.isoformat(),
+                            "error": f"{ident}: {type(exc).__name__}: {str(exc)[:160]}",
+                        })
+                        ambito = ambito_sumario
+
                 if ambito != "SI":
                     if len(descartados_ambito) < 20:
                         descartados_ambito.append({
@@ -98,7 +131,10 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                             "boe_id": ident,
                             "epigrafe": epigrafe,
                             "titulo": titulo,
-                            "ambito": ambito,
+                            "ambito_sumario": ambito_sumario,
+                            "ambito_documento": ambito,
+                            "fuente_ambito": fuente_ambito,
+                            "muestra_documento": texto_documento[:350],
                         })
                     continue
 
@@ -115,6 +151,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                         "url_xml": _texto_url(item.get("url_xml")),
                         "url_pdf": _texto_url(item.get("url_pdf")),
                         "ambito_administrativo": ambito,
+                        "fuente_ambito": fuente_ambito,
                     }
                 )
             fecha += timedelta(days=1)
@@ -125,6 +162,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
         "hasta": hasta.isoformat(),
         "items_locales": items_locales,
         "candidatos_cv": candidatos_cv,
+        "documentos_leidos": documentos_leidos,
         "descartados_ambito": descartados_ambito,
         "hallazgos": len(hallazgos),
         "dias_con_error": len(errores),
