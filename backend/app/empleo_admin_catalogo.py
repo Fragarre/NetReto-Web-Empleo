@@ -21,6 +21,7 @@ from . import bop_valencia_patch as _bop_patch
 from .ayuntamiento_valencia import importar_ayuntamiento_valencia
 from .bop_valencia_municipios import descubrir_municipales_bop, importar_municipales_bop
 from .boe_local_diagnostico import diagnosticar_boe_local
+from .boe_local_extractor import extraer_convocatorias_boe_local
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial_unicode
 router = APIRouter(prefix="/admin/gestion", tags=["admin-empleo"])
@@ -68,6 +69,13 @@ def diagnostico_boe_local(hasta:date=Query(...),dias:int=Query(default=30,ge=1,l
     _validar_import_secret(x_import_secret)
     try: return diagnosticar_boe_local(hasta=hasta,dias=dias)
     except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en diagnóstico BOE local: {exc}") from exc
+
+@router.post("/diagnostico/boe-local-estructurado")
+def diagnostico_boe_local_estructurado(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
+    """Previsualiza convocatorias locales CV estructuradas desde BOE. SOLO LECTURA."""
+    _validar_import_secret(x_import_secret)
+    try: return extraer_convocatorias_boe_local(hasta=hasta,dias=dias)
+    except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en extracción estructurada BOE local: {exc}") from exc
 
 @router.post("/import/bop-municipios")
 def importar_bop_municipios_admin(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),aplicar:bool=Query(default=False),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
