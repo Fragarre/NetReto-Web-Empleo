@@ -47,12 +47,16 @@ def _iter_items_locales(data: dict[str, Any]):
 
 
 def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict[str, Any]:
-    """SOLO LECTURA. Descubre convocatorias administrativas locales CV desde la API oficial BOE."""
+    """SOLO LECTURA. Diagnóstico por etapas de convocatorias locales CV desde BOE."""
     hasta = hasta or date.today()
     desde = hasta - timedelta(days=max(0, dias - 1))
     hallazgos: list[dict[str, Any]] = []
     errores: list[dict[str, str]] = []
     vistos: set[str] = set()
+    items_locales = 0
+    candidatos_cv = 0
+    descartados_ambito: list[dict[str, str]] = []
+    muestras_raiz: list[dict[str, Any]] = []
     headers = {
         "Accept": "application/json",
         "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
@@ -68,12 +72,20 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                     continue
                 r.raise_for_status()
                 data = r.json()
+                if len(muestras_raiz) < 3:
+                    muestras_raiz.append({
+                        "fecha": fecha.isoformat(),
+                        "claves_raiz": list(data.keys()) if isinstance(data, dict) else [],
+                        "claves_data": list((data.get("data") or {}).keys()) if isinstance(data, dict) and isinstance(data.get("data"), dict) else [],
+                        "claves_sumario": list((((data.get("data") or {}).get("sumario") or {}).keys())) if isinstance(data, dict) and isinstance((data.get("data") or {}).get("sumario"), dict) else [],
+                    })
             except Exception as exc:
                 errores.append({"fecha": fecha.isoformat(), "error": f"{type(exc).__name__}: {str(exc)[:180]}"})
                 fecha += timedelta(days=1)
                 continue
 
             for seccion, departamento, epigrafe, item in _iter_items_locales(data):
+                items_locales += 1
                 ident = str(item.get("identificador") or "").strip()
                 titulo = str(item.get("titulo") or "").strip()
                 if not ident or ident in vistos or not titulo:
@@ -82,11 +94,14 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                 contexto = f"{epigrafe} {titulo}".lower()
                 if not any(p in contexto for p in PROVINCIAS):
                     continue
+                candidatos_cv += 1
 
                 ambito = clasificar_ambito_administrativo(
                     {"denominacion": f"{epigrafe}. {titulo}", "cuerpo_escala": None, "grupo": None}
                 )
                 if ambito != "SI":
+                    if len(descartados_ambito) < 20:
+                        descartados_ambito.append({"fecha": fecha.isoformat(), "boe_id": ident, "titulo": titulo, "ambito": ambito})
                     continue
 
                 vistos.add(ident)
@@ -110,6 +125,10 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
         "modo": "SOLO_LECTURA",
         "desde": desde.isoformat(),
         "hasta": hasta.isoformat(),
+        "items_locales": items_locales,
+        "candidatos_cv": candidatos_cv,
+        "descartados_ambito": descartados_ambito,
+        "muestras_estructura": muestras_raiz,
         "hallazgos": len(hallazgos),
         "dias_con_error": len(errores),
         "errores": errores,
