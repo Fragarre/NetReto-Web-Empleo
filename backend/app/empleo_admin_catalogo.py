@@ -79,11 +79,11 @@ def diagnostico_boe_local_estructurado(hasta:date=Query(...),dias:int=Query(defa
     except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en extracción estructurada BOE local: {exc}") from exc
 
 @router.post("/import/boe-local")
-def previsualizar_importacion_boe_local_admin(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
-    """Previsualiza la importación BOE local en la estructura NetReto. SOLO LECTURA."""
+def previsualizar_importacion_boe_local_admin(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),aplicar:bool=Query(default=False),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
+    """Previsualiza por defecto; solo escribe convocatorias BOE nuevas seguras con aplicar=true."""
     _validar_import_secret(x_import_secret)
-    try: return previsualizar_importacion_boe_local(hasta=hasta,dias=dias)
-    except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en previsualización de importación BOE local: {exc}") from exc
+    try: return previsualizar_importacion_boe_local(hasta=hasta,dias=dias,aplicar=aplicar)
+    except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en importación BOE local: {exc}") from exc
 
 @router.post("/import/bop-municipios")
 def importar_bop_municipios_admin(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),aplicar:bool=Query(default=False),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
