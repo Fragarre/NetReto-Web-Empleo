@@ -28,7 +28,7 @@ def main() -> int:
     hoy = date.today().isoformat()
     with httpx.Client(timeout=180.0) as client:
         _post(client, "/admin/import/gva?max_paginas=3")
-        _post(client, f"/admin/gestion/import/boe-local?hasta={hoy}&dias=30&aplicar=true")
+        _post(client, f"/admin/gestion/import/boe-local?hasta={hoy}&dias=45&aplicar=true")
         _post(client, f"/admin/gestion/import/bop-municipios?hasta={hoy}&dias=30&aplicar=true")
         _post(client, "/admin/seguimiento/preparar-notificaciones")
 
