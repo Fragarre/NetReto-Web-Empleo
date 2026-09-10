@@ -46,6 +46,33 @@ def _iter_items_locales(data: dict[str, Any]):
                             yield nombre_seccion, nombre_departamento, nombre_epigrafe, item
 
 
+def _muestra_diario(data: dict[str, Any]) -> dict[str, Any]:
+    sumario = ((data.get("data") or {}).get("sumario") or {})
+    diario = sumario.get("diario")
+    muestra: dict[str, Any] = {
+        "tipo_diario": type(diario).__name__,
+        "cantidad_diarios": len(diario) if isinstance(diario, list) else (1 if diario is not None else 0),
+    }
+    primero = diario[0] if isinstance(diario, list) and diario else diario
+    if isinstance(primero, dict):
+        muestra["claves_primer_diario"] = list(primero.keys())
+        seccion = primero.get("seccion")
+        muestra["tipo_seccion"] = type(seccion).__name__
+        muestra["cantidad_secciones"] = len(seccion) if isinstance(seccion, list) else (1 if seccion is not None else 0)
+        primeras = _lista(seccion)[:5]
+        muestra["primeras_secciones"] = [
+            {
+                "claves": list(s.keys()) if isinstance(s, dict) else [],
+                "codigo": s.get("codigo") if isinstance(s, dict) else None,
+                "nombre": s.get("nombre") if isinstance(s, dict) else None,
+            }
+            for s in primeras
+        ]
+    else:
+        muestra["valor_primer_diario"] = str(primero)[:500]
+    return muestra
+
+
 def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict[str, Any]:
     """SOLO LECTURA. Diagnóstico por etapas de convocatorias locales CV desde BOE."""
     hasta = hasta or date.today()
@@ -78,6 +105,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                         "claves_raiz": list(data.keys()) if isinstance(data, dict) else [],
                         "claves_data": list((data.get("data") or {}).keys()) if isinstance(data, dict) and isinstance(data.get("data"), dict) else [],
                         "claves_sumario": list((((data.get("data") or {}).get("sumario") or {}).keys())) if isinstance(data, dict) and isinstance((data.get("data") or {}).get("sumario"), dict) else [],
+                        "diario": _muestra_diario(data) if isinstance(data, dict) else {},
                     })
             except Exception as exc:
                 errores.append({"fecha": fecha.isoformat(), "error": f"{type(exc).__name__}: {str(exc)[:180]}"})
