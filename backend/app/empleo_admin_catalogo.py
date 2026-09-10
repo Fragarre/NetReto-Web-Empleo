@@ -4,8 +4,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 import hmac
 import os
+import re
 from typing import Any
 
+import httpx
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from psycopg.rows import dict_row
@@ -64,6 +67,31 @@ def diagnostico_bop_municipios(hasta:date=Query(...),dias:int=Query(default=30,g
     try: return descubrir_municipales_bop(hasta=hasta,dias=dias)
     except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en diagnóstico municipal BOP: {exc}") from exc
 
+@router.post("/diagnostico/bop-municipios-crudo")
+def diagnostico_bop_municipios_crudo(fecha:date=Query(...),buscar:str|None=Query(default=None),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
+    """SOLO LECTURA. Devuelve registros crudos del BOP de una fecha, sin clasificador administrativo."""
+    _validar_import_secret(x_import_secret)
+    headers={"User-Agent":"NetReto-Empleo/0.1 (https://netexamenes.com)","Accept-Language":"es-ES,es;q=0.9"}
+    try:
+        with httpx.Client(timeout=30,headers=headers,follow_redirects=True) as client:
+            _,html,error=_bop_patch._obtener_pagina(client,fecha)
+        if error or not html:
+            return {"fecha":fecha.isoformat(),"error":error or "Sin HTML","html_len":len(html or ""),"registros_totales":0,"municipales":0,"coincidencias":[]}
+        texto=_bop._norm(BeautifulSoup(html,"html.parser").get_text(" ",strip=True))
+        patron=re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)",re.I)
+        registros=[]
+        for mr in patron.finditer(texto):
+            inicio=max(texto.rfind("Anunci",0,mr.start()),texto.rfind("Anuncio",0,mr.start()))
+            if inicio<0: continue
+            titulo=_bop._norm(texto[inicio:mr.start()]).rstrip(".")+"."
+            n=_bop._sin(titulo)
+            municipal=bool(re.search(r"\b(?:ajuntament|ayuntamiento)\b",n,re.I))
+            registros.append({"registro":mr.group(1),"titulo":titulo[:1200],"municipal":municipal,"url":f"{_bop.DOWNLOAD_URL}?anuncioNumReg={mr.group(1)}&lang=es"})
+        consulta=_bop._sin(buscar or "").strip()
+        coincidencias=[r for r in registros if not consulta or consulta in _bop._sin(r["titulo"])]
+        return {"fecha":fecha.isoformat(),"error":None,"html_len":len(html),"registros_totales":len(registros),"municipales":sum(1 for r in registros if r["municipal"]),"buscar":buscar,"coincidencias":coincidencias[:100]}
+    except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en diagnóstico BOP municipal crudo: {exc}") from exc
+
 @router.post("/diagnostico/boe-local")
 def diagnostico_boe_local(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
     """Diagnóstico de convocatorias administrativas locales CV desde BOE. SOLO LECTURA."""
@@ -98,7 +126,6 @@ def importar_bop_valencia_tramo(hasta:date=Query(...),dias:int=Query(default=30,
     def descubrir_tramo(client,historico:bool=False,dias:int=1):
         fechas=[desde+timedelta(days=i) for i in range((hasta-desde).days+1)]; resultados=[]; vistos=set()
         def obtener(fecha:date):
-            import httpx
             headers={"User-Agent":"NetReto-Empleo/0.1 (https://netexamenes.com)","Accept-Language":"es-ES,es;q=0.9"}
             with httpx.Client(timeout=30,headers=headers,follow_redirects=True) as c: return _bop_patch._obtener_pagina(c,fecha)
         with ThreadPoolExecutor(max_workers=4) as executor:
