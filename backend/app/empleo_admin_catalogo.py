@@ -22,6 +22,7 @@ from .ayuntamiento_valencia import importar_ayuntamiento_valencia
 from .bop_valencia_municipios import descubrir_municipales_bop, importar_municipales_bop
 from .boe_local_diagnostico import diagnosticar_boe_local
 from .boe_local_extractor import extraer_convocatorias_boe_local
+from .boe_local_import import previsualizar_importacion_boe_local
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial_unicode
 router = APIRouter(prefix="/admin/gestion", tags=["admin-empleo"])
@@ -76,6 +77,13 @@ def diagnostico_boe_local_estructurado(hasta:date=Query(...),dias:int=Query(defa
     _validar_import_secret(x_import_secret)
     try: return extraer_convocatorias_boe_local(hasta=hasta,dias=dias)
     except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en extracción estructurada BOE local: {exc}") from exc
+
+@router.post("/import/boe-local")
+def previsualizar_importacion_boe_local_admin(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
+    """Previsualiza la importación BOE local en la estructura NetReto. SOLO LECTURA."""
+    _validar_import_secret(x_import_secret)
+    try: return previsualizar_importacion_boe_local(hasta=hasta,dias=dias)
+    except Exception as exc: raise HTTPException(status_code=502,detail=f"Error en previsualización de importación BOE local: {exc}") from exc
 
 @router.post("/import/bop-municipios")
 def importar_bop_municipios_admin(hasta:date=Query(...),dias:int=Query(default=30,ge=1,le=45),aplicar:bool=Query(default=False),x_import_secret:str|None=Header(default=None))->dict[str,Any]:
