@@ -12,6 +12,7 @@ from .ambito_administrativo import clasificar_ambito_administrativo
 
 _BASE_PARSEAR_DETALLE = base.parsear_detalle
 _BASE_IMPORTAR_GVA_ROBUSTO = base.importar_gva_robusto
+_BASE_DESCUBRIR_DETALLES = base.descubrir_detalles
 
 TIPOS_INCLUIDOS = {
     "oposicion",
@@ -83,22 +84,113 @@ def _resolver_organismo(proceso: dict[str, Any]) -> tuple[int | None, str | None
     return base.GVA_ORGANISMO_ID, "generalitat_valenciana", organismo_enlace
 
 
+def _etapa_actual(texto: str) -> str | None:
+    m = re.search(
+        r"Etapa actual\s*:\s*(.+?)(?=\s+C[oó]digo SIA\s*:|\s+C[oó]digo GVA\s*:|\s+Descargar informaci[oó]n\b)",
+        texto,
+        re.I,
+    )
+    return base._normalizar(m.group(1)) if m else None
+
+
+def _estado_plazo_solicitud(texto: str) -> str | None:
+    n = _sin(texto)
+    if "plazo abierto" in n:
+        return "ABIERTO"
+    if "plazo cerrado" in n:
+        return "CERRADO"
+    if "plazo pendiente" in n:
+        return "PENDIENTE"
+    return None
+
+
+def _estado_ciclo_selectivo(texto: str) -> str:
+    """Estado del proceso selectivo, independiente del plazo de inscripción."""
+    etapa = _sin(_etapa_actual(texto) or "").strip()
+    if not etapa:
+        return "EN_CURSO"
+
+    terminales = (
+        "finalizacion del proceso selectivo",
+        "finalitzacio del proces selectiu",
+        "toma de posesion",
+        "presa de possessio",
+        "adjudicacion de destinos y fecha de cese/toma de posesion",
+        "adjudicacio de destinacions",
+    )
+    if any(x in etapa for x in terminales):
+        return "FINALIZADO"
+    if etapa.startswith("nombramiento") and "tribunal" not in etapa:
+        return "FINALIZADO"
+    if etapa.startswith("nomenament") and "tribunal" not in etapa:
+        return "FINALIZADO"
+    if "desistimiento" in etapa or "desistiment" in etapa or "anulacion" in etapa or "anul·lacio" in etapa:
+        return "FINALIZADO"
+    return "EN_CURSO"
+
+
+def _es_del_ambito_activo(_: dict[str, Any]) -> bool:
+    """La antigüedad no excluye una oportunidad que todavía se sigue oficialmente."""
+    return True
+
+
+def _detalles_existentes_a_seguir() -> list[tuple[int, str]]:
+    """Recupera fichas GVA ya conocidas aunque su plazo de solicitud esté cerrado."""
+    resultado: list[tuple[int, str]] = []
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT identificador_estable, datos_json
+            FROM procesos
+            WHERE organismo_id=%s
+              AND es_oportunidad=TRUE
+              AND ambito_administrativo IN ('SI','REVISION')
+              AND COALESCE(LOWER(estado),'') NOT IN ('finalizado','cancelado','desistido')
+              AND identificador_estable LIKE 'GVA:%%'
+            ORDER BY id
+            """,
+            (base.GVA_ORGANISMO_ID,),
+        )
+        for identificador, datos in cursor.fetchall():
+            datos = datos or {}
+            id_emp = datos.get("id_emp")
+            if id_emp is None:
+                m = re.fullmatch(r"GVA:(\d+)", identificador or "")
+                id_emp = int(m.group(1)) if m else None
+            try:
+                id_emp = int(id_emp)
+            except (TypeError, ValueError):
+                continue
+            url = str(datos.get("url_detalle") or f"{base.GVA_BASE_URL}/detall-ocupacio-publica?id_emp={id_emp}")
+            resultado.append((id_emp, url))
+    return resultado
+
+
+def descubrir_detalles(client, max_paginas: int = 10) -> list[tuple[int, str]]:
+    """Une nuevas oportunidades con todos los procesos GVA conocidos no terminales."""
+    encontrados = dict(_BASE_DESCUBRIR_DETALLES(client, max_paginas=max_paginas))
+    for id_emp, url in _detalles_existentes_a_seguir():
+        encontrados[id_emp] = url
+    return sorted(encontrados.items())
+
+
 def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     proceso = _BASE_PARSEAR_DETALLE(url, html, id_emp)
+    soup = BeautifulSoup(html, "html.parser")
+    texto = base._normalizar(soup.get_text(" ", strip=True))
     titulo = str(proceso.get("denominacion") or "")
     proceso["tipo_proceso"] = _tipo_convocatoria(titulo)
     proceso["turno"] = _turno(titulo)
 
     organismo_id, motivo, organismo_enlace = _resolver_organismo(proceso)
     organismo_texto = str(proceso.get("organismo") or proceso.get("datos_json", {}).get("organismo_detectado") or "")
-    estado_etapa = proceso.get("estado")
-    etapa_actual = proceso.get("etapa_actual")
+    etapa_actual = _etapa_actual(texto)
+    estado_plazo = _estado_plazo_solicitud(texto)
     fecha_etapa = proceso.get("fecha_etapa")
 
     proceso["organismo_id"] = organismo_id
-    if estado_etapa:
-        proceso["estado"] = estado_etapa
-    if fecha_etapa and etapa_actual and "base" in base._sin_acentos(etapa_actual):
+    proceso["estado"] = _estado_ciclo_selectivo(texto)
+    if fecha_etapa and etapa_actual and "base" in _sin(etapa_actual):
         proceso["fecha_convocatoria"] = fecha_etapa
 
     proceso["datos_json"] = {
@@ -108,6 +200,7 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
         "organismo_id_resuelto": organismo_id,
         "organismo_motivo": motivo,
         "etapa_actual": etapa_actual,
+        "estado_plazo_solicitud": estado_plazo,
         "etapa_actual_fecha_publicacion": fecha_etapa.isoformat() if fecha_etapa else None,
     }
     return proceso
@@ -116,6 +209,9 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
 base._tipo_convocatoria = _tipo_convocatoria
 base._turno = _turno
 base._es_incluido = _es_incluido
+base._es_del_ambito = _es_del_ambito_activo
+base._estado = _estado_ciclo_selectivo
+base.descubrir_detalles = descubrir_detalles
 base.parsear_detalle = parsear_detalle
 
 
@@ -141,11 +237,12 @@ def _desactivar_cambios_tecnicos_gva() -> int:
         return cursor.rowcount
 
 
-def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = None) -> dict[str, Any]:
-    """Importa GVA y clasifica únicamente los procesos aún en REVISION.
+def importar_gva_robusto(*, max_paginas: int = 10, max_detalles: int | None = None) -> dict[str, Any]:
+    """Importa GVA y mantiene en seguimiento las fichas conocidas hasta su cierre selectivo real.
 
-    Las decisiones manuales SI/NO nunca se sobrescriben en importaciones posteriores.
-    Los cambios técnicos de captura se conservan en histórico, pero no son novedades.
+    El cierre del plazo de solicitudes se guarda como dato de la ficha y no
+    convierte el proceso en finalizado. Las decisiones manuales SI/NO tampoco
+    se sobrescriben en importaciones posteriores.
     """
     stats = _BASE_IMPORTAR_GVA_ROBUSTO(max_paginas=max_paginas, max_detalles=max_detalles)
     actualizados = 0
