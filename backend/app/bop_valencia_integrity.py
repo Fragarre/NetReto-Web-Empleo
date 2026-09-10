@@ -101,8 +101,13 @@ _TERMINALES = (
 )
 
 
+def _es_publicacion_terminal(titulo: str | None, contenido: str | None) -> bool:
+    n = _bop._sin(f"{titulo or ''} {contenido or ''}")
+    return any(_bop._sin(x) in n for x in _TERMINALES)
+
+
 def _postprocesar_estado_terminal() -> int:
-    """Cierra el proceso solo cuando una publicación oficial acredita un hito terminal."""
+    """Cierra procesos solo con evidencia oficial terminal, aunque luego haya correcciones."""
     finalizados = 0
     with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
@@ -114,16 +119,20 @@ def _postprocesar_estado_terminal() -> int:
                 FROM publicaciones
                 WHERE proceso_id=p.id
                 ORDER BY fecha_publicacion DESC NULLS LAST,id DESC
-                LIMIT 1
             ) pub ON TRUE
             WHERE p.identificador_estable LIKE 'DVAL:%%'
               AND COALESCE(LOWER(p.estado),'') NOT IN ('finalizado','cancelado','desistido')
+            ORDER BY p.id, pub.fecha_publicacion DESC NULLS LAST, pub.id DESC
             """
         )
+        terminal_por_proceso: dict[int, tuple[str, int]] = {}
         for proceso_id, estado_anterior, publicacion_id, titulo, contenido in cursor.fetchall():
-            n = _bop._sin(f"{titulo or ''} {contenido or ''}")
-            if not any(_bop._sin(x) in n for x in _TERMINALES):
+            if proceso_id in terminal_por_proceso:
                 continue
+            if _es_publicacion_terminal(titulo, contenido):
+                terminal_por_proceso[proceso_id] = (estado_anterior, publicacion_id)
+
+        for proceso_id, (estado_anterior, publicacion_id) in terminal_por_proceso.items():
             cursor.execute(
                 "UPDATE procesos SET estado='FINALIZADO',updated_at=NOW() WHERE id=%s AND COALESCE(LOWER(estado),'') <> 'finalizado'",
                 (proceso_id,),
