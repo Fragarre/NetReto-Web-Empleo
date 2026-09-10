@@ -3,7 +3,6 @@ from typing import Any
 from .database import get_connection
 
 
-# Tipos que no forman parte del catálogo de empleo útil para el opositor.
 TIPOS_EXCLUIDOS = (
     "Promoción interna",
     "Libre designación",
@@ -27,27 +26,20 @@ PATRONES_TITULO_EXCLUIDOS = (
 )
 
 ESTADOS_TERMINALES = (
-    "finalizado",
-    "finalitzado",
-    "finalitzat",
-    "cancelado",
-    "cancel·lado",
-    "cancel·lat",
-    "desistido",
-    "desistit",
-    "anulado",
-    "anul·lat",
+    "finalizado", "finalitzado", "finalitzat",
+    "cancelado", "cancel·lado", "cancel·lat",
+    "desistido", "desistit", "anulado", "anul·lat",
 )
 
 
-def _condiciones_exclusion() -> tuple[str, list[Any]]:
+def _condiciones_catalogo() -> tuple[str, list[Any]]:
     placeholders_tipo = ", ".join(["%s"] * len(TIPOS_EXCLUIDOS))
     placeholders_estado = ", ".join(["%s"] * len(ESTADOS_TERMINALES))
     condiciones = ["p.es_oportunidad = TRUE", "p.ambito_administrativo = 'SI'"]
-    condiciones.append(f"p.tipo_proceso NOT IN ({placeholders_tipo})")
+    condiciones.append(f"COALESCE(p.tipo_proceso, '') NOT IN ({placeholders_tipo})")
     condiciones.append("COALESCE(UPPER(p.turno), '') <> 'PROMOCION_INTERNA'")
-    # fecha_cierre y el estado de un plazo de solicitud no finalizan el proceso selectivo.
-    # Solo desaparece del catálogo cuando una fuente oficial acredita un estado terminal.
+    # El cierre de inscripción no finaliza el proceso selectivo. Solo se oculta
+    # cuando una fuente oficial acredita un estado terminal del proceso.
     condiciones.append(f"COALESCE(LOWER(p.estado), '') NOT IN ({placeholders_estado})")
     params: list[Any] = list(TIPOS_EXCLUIDOS) + list(ESTADOS_TERMINALES)
     for patron in PATRONES_TITULO_EXCLUIDOS:
@@ -85,10 +77,10 @@ SELECT_FIELDS = """
 
 
 def listar_procesos(*, organismo_id: int | None = None, estado: str | None = None, limite: int = 100) -> list[dict[str, Any]]:
-    """Lista oportunidades administrativas confirmadas del catálogo público."""
+    """Lista oportunidades administrativas cuyo proceso selectivo sigue activo."""
     limite = max(1, min(limite, 200))
-    exclusion_sql, params = _condiciones_exclusion()
-    query = f"SELECT {SELECT_FIELDS} FROM procesos p JOIN organismos o ON o.id=p.organismo_id WHERE {exclusion_sql}"
+    catalogo_sql, params = _condiciones_catalogo()
+    query = f"SELECT {SELECT_FIELDS} FROM procesos p JOIN organismos o ON o.id=p.organismo_id WHERE {catalogo_sql}"
     if organismo_id is not None:
         query += " AND p.organismo_id = %s"; params.append(organismo_id)
     if estado is not None:
@@ -101,9 +93,12 @@ def listar_procesos(*, organismo_id: int | None = None, estado: str | None = Non
 
 
 def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
-    exclusion_sql, exclusion_params = _condiciones_exclusion()
+    """Devuelve el detalle incluso al finalizar, para no romper Mi seguimiento."""
     with get_connection() as connection, connection.cursor() as cursor:
-        cursor.execute(f"SELECT {SELECT_FIELDS} FROM procesos p JOIN organismos o ON o.id=p.organismo_id WHERE p.id=%s AND {exclusion_sql}", (proceso_id,*exclusion_params))
+        cursor.execute(
+            f"SELECT {SELECT_FIELDS} FROM procesos p JOIN organismos o ON o.id=p.organismo_id WHERE p.id=%s AND p.es_oportunidad=TRUE AND p.ambito_administrativo='SI'",
+            (proceso_id,),
+        )
         row=cursor.fetchone()
         if row is None: return None
         columns=[d.name for d in cursor.description]
