@@ -80,6 +80,10 @@ def _candidatos_bop(
     return resultado
 
 
+def _es_turno_interno(turno: str | None) -> bool:
+    return "promocion interna" in _sin(turno)
+
+
 def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30) -> dict[str, Any]:
     """SOLO LECTURA. Adapta el extractor BOE a la estructura real de NetReto sin escribir."""
     extraccion = extraer_convocatorias_boe_local(hasta=hasta, dias=dias)
@@ -91,6 +95,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30) -> dict[
         "dias_con_error": extraccion["dias_con_error"],
         "errores": extraccion["errores"],
         "fuera_alcance_provincia": 0,
+        "excluidas_turno_interno": 0,
         "nuevas": 0,
         "existentes_boe": 0,
         "posibles_existentes_bop": 0,
@@ -112,6 +117,22 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30) -> dict[
 
             codigo = convocatoria["codigo_externo"]
             estable = f"BOELOCAL:{codigo}"
+
+            if _es_turno_interno(convocatoria.get("turno")):
+                resultado["excluidas_turno_interno"] += 1
+                resultado["detalle"].append({
+                    "codigo_externo": codigo,
+                    "identificador_estable": estable,
+                    "entidad": convocatoria.get("entidad"),
+                    "denominacion": convocatoria.get("denominacion"),
+                    "plazas": convocatoria.get("plazas"),
+                    "sistema_selectivo": convocatoria.get("sistema_selectivo"),
+                    "turno": convocatoria.get("turno"),
+                    "fecha_boe": convocatoria.get("fecha_boe"),
+                    "estado_importacion": "EXCLUIDA_TURNO_INTERNO",
+                })
+                continue
+
             cursor.execute(
                 "SELECT id,identificador_estable FROM procesos WHERE identificador_estable=%s",
                 (estable,),
