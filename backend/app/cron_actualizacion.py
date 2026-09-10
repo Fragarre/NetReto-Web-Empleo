@@ -11,10 +11,17 @@ import httpx
 BASE_URL = os.getenv("NETRETO_EMPLEO_API_URL", "https://netreto-empleo-api.onrender.com").rstrip("/")
 SECRET = os.getenv("EMPLOYMENT_IMPORT_SECRET")
 
-# Solape técnico para tolerar fallos temporales y reintentos. NO es un criterio
-# de inclusión: una oportunidad permanece en catálogo mientras el proceso
-# selectivo siga activo, cualquiera que sea su antigüedad.
-VENTANA_SOLAPE_DIAS = 30
+# Ventanas técnicas de solape. NO son criterios de inclusión: una oportunidad
+# permanece en catálogo mientras su proceso selectivo siga activo, cualquiera
+# que sea su antigüedad.
+VENTANA_BOE_DIAS = 30
+VENTANA_BOP_DIAS = 7
+
+# El buscador GVA devuelve 30 resultados por página. Tres páginas son suficientes
+# para el descubrimiento diario; además, el importador vuelve a consultar todos
+# los procesos GVA ya conocidos y no terminales aunque hayan desaparecido del
+# listado de plazo abierto.
+GVA_PAGINAS_DIARIAS = 3
 
 # Render puede estar reiniciando una instancia o una fuente oficial puede sufrir
 # un fallo transitorio. Reintentamos solo errores de red y respuestas 5xx.
@@ -32,12 +39,15 @@ def _post(client: httpx.Client, path: str) -> None:
                 headers={"X-Import-Secret": SECRET or ""},
             )
 
-            # Los 4xx son errores permanentes de configuración/solicitud: no
-            # tiene sentido repetirlos. Los 5xx sí pueden ser transitorios.
             if 400 <= response.status_code < 500:
                 response.raise_for_status()
 
             if response.status_code >= 500:
+                detalle = response.text[:1000].replace("\n", " ")
+                print(
+                    f"RESPUESTA {response.status_code} en {path}: {detalle}",
+                    file=sys.stderr,
+                )
                 response.raise_for_status()
 
             print(path, response.json())
@@ -71,17 +81,20 @@ def main() -> int:
 
     hoy = date.today().isoformat()
     tareas = [
-        # GVA: descubre nuevas fichas y vuelve a consultar todos los procesos
-        # conocidos no terminales, aunque su plazo de inscripción haya cerrado.
-        "/admin/import/gva?max_paginas=10",
+        # Descubrimiento reciente + seguimiento de todos los GVA conocidos.
+        f"/admin/import/gva?max_paginas={GVA_PAGINAS_DIARIAS}",
 
-        # Diputación de Valencia: publicaciones recientes del BOP con solape.
-        f"/admin/import/bop-valencia?historico=true&dias={VENTANA_SOLAPE_DIAS}",
+        # Diputación: una semana de solape permite recuperar varios días de
+        # incidencias sin repetir cada día un histórico costoso de 30 días.
+        f"/admin/import/bop-valencia?historico=true&dias={VENTANA_BOP_DIAS}",
 
-        # Administración local: el solape solo descubre publicaciones nuevas.
-        # La antigüedad nunca determina si un proceso sigue siendo oportunidad.
-        f"/admin/gestion/import/boe-local?hasta={hoy}&dias={VENTANA_SOLAPE_DIAS}&aplicar=true",
-        f"/admin/gestion/import/bop-municipios?hasta={hoy}&dias={VENTANA_SOLAPE_DIAS}&aplicar=true",
+        # BOE local es rápido y conserva un solape mayor para descubrimiento.
+        f"/admin/gestion/import/boe-local?hasta={hoy}&dias={VENTANA_BOE_DIAS}&aplicar=true",
+
+        # BOP municipal es la fuente más costosa; siete días de solape son
+        # suficientes para una ejecución diaria y no afectan al ciclo de vida
+        # de los procesos ya persistidos.
+        f"/admin/gestion/import/bop-municipios?hasta={hoy}&dias={VENTANA_BOP_DIAS}&aplicar=true",
 
         "/admin/seguimiento/preparar-notificaciones",
     ]
@@ -92,8 +105,6 @@ def main() -> int:
             try:
                 _post(client, path)
             except (httpx.HTTPError, ValueError) as exc:
-                # Una fuente no debe impedir que se actualicen las demás. Al
-                # terminar, el workflow queda en fallo si alguna tarea falló.
                 errores.append((path, exc))
                 print(f"ERROR: {path}: {exc}", file=sys.stderr)
 
