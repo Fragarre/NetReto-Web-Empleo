@@ -59,6 +59,32 @@ def _texto_documento_boe(client: httpx.Client, ident: str) -> str:
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def _fragmentos_plazas(texto: str) -> list[str]:
+    """Extrae únicamente frases que describen plazas, evitando clasificar toda la página BOE."""
+    fragmentos: list[str] = []
+    for frag in re.split(r"(?<=[.!?])\s+", texto):
+        limpio = frag.strip()
+        if re.search(r"\bplazas?\s+de\b", limpio, flags=re.I):
+            fragmentos.append(limpio)
+    return fragmentos
+
+
+def _clasificar_documento_por_plazas(texto: str) -> tuple[str, list[dict[str, str]]]:
+    detalle: list[dict[str, str]] = []
+    estados: list[str] = []
+    for frag in _fragmentos_plazas(texto):
+        estado = clasificar_ambito_administrativo(
+            {"denominacion": frag, "cuerpo_escala": None, "grupo": None}
+        )
+        estados.append(estado)
+        detalle.append({"ambito": estado, "texto": frag[:300]})
+    if "SI" in estados:
+        return "SI", detalle
+    if "REVISION" in estados:
+        return "REVISION", detalle
+    return "NO", detalle
+
+
 def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict[str, Any]:
     """SOLO LECTURA. Diagnóstico por etapas de convocatorias locales CV desde BOE."""
     hasta = hasta or date.today()
@@ -69,7 +95,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
     items_locales = 0
     candidatos_cv = 0
     documentos_leidos = 0
-    descartados_ambito: list[dict[str, str]] = []
+    descartados_ambito: list[dict[str, Any]] = []
     headers = {
         "Accept": "application/json",
         "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
@@ -108,15 +134,14 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                 ambito = ambito_sumario
                 fuente_ambito = "SUMARIO"
                 texto_documento = ""
+                plazas_clasificadas: list[dict[str, str]] = []
 
                 if ambito_sumario != "SI":
                     try:
                         texto_documento = _texto_documento_boe(client, ident)
                         documentos_leidos += 1
-                        ambito = clasificar_ambito_administrativo(
-                            {"denominacion": texto_documento, "cuerpo_escala": None, "grupo": None}
-                        )
-                        fuente_ambito = "DOCUMENTO_BOE"
+                        ambito, plazas_clasificadas = _clasificar_documento_por_plazas(texto_documento)
+                        fuente_ambito = "DOCUMENTO_BOE_PLAZAS"
                     except Exception as exc:
                         errores.append({
                             "fecha": fecha.isoformat(),
@@ -134,7 +159,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                             "ambito_sumario": ambito_sumario,
                             "ambito_documento": ambito,
                             "fuente_ambito": fuente_ambito,
-                            "muestra_documento": texto_documento[:350],
+                            "plazas_clasificadas": plazas_clasificadas,
                         })
                     continue
 
@@ -152,6 +177,7 @@ def diagnosticar_boe_local(*, hasta: date | None = None, dias: int = 30) -> dict
                         "url_pdf": _texto_url(item.get("url_pdf")),
                         "ambito_administrativo": ambito,
                         "fuente_ambito": fuente_ambito,
+                        "plazas_clasificadas": plazas_clasificadas,
                     }
                 )
             fecha += timedelta(days=1)
