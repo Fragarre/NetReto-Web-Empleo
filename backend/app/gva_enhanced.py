@@ -13,6 +13,9 @@ from .ambito_administrativo import clasificar_ambito_administrativo
 _BASE_PARSEAR_DETALLE = base.parsear_detalle
 _BASE_IMPORTAR_GVA_ROBUSTO = base.importar_gva_robusto
 _BASE_DESCUBRIR_DETALLES = base.descubrir_detalles
+_BASE_TIPO_CONVOCATORIA = base._tipo_convocatoria
+_BASE_TURNO = base._turno
+_BASE_ES_INCLUIDO = base._es_incluido
 
 TIPOS_INCLUIDOS = {
     "oposicion",
@@ -50,22 +53,22 @@ def _sin(s: str) -> str:
     return base._sin_acentos(s or "")
 
 
-def _tipo_convocatoria(titulo: str) -> str:
+def _tipo_convocatoria(titulo: str) -> str | None:
     n = _sin(titulo).lower()
     if any(p in n for p in PATRONES_BOLSA_NO_OPORTUNIDAD):
         return "Consulta administrativa"
-    return base._tipo_convocatoria(titulo)
+    return _BASE_TIPO_CONVOCATORIA(titulo)
 
 
 def _turno(titulo: str) -> str | None:
-    return base._turno(titulo)
+    return _BASE_TURNO(titulo)
 
 
-def _es_incluido(titulo: str) -> bool:
-    n = _sin(titulo).lower()
+def _es_incluido(tipo: str | None) -> bool:
+    n = _sin(tipo or "").lower()
     if any(p in n for p in PATRONES_BOLSA_NO_OPORTUNIDAD):
         return False
-    return base._es_incluido(titulo)
+    return _BASE_ES_INCLUIDO(tipo)
 
 
 def _resolver_organismo(proceso: dict[str, Any]) -> tuple[int | None, str | None, str | None]:
