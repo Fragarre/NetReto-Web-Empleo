@@ -8,6 +8,7 @@ from . import bop_valencia_municipios as _municipios
 
 
 _BUSCAR_PROCESO_ORIGINAL = _municipios._buscar_proceso_seguimiento
+_CLASIFICAR_ANUNCIO_ORIGINAL = _municipios._clasificar_anuncio
 
 
 _STOPWORDS = {
@@ -22,6 +23,23 @@ _STOPWORDS = {
 def _sin(texto: str | None) -> str:
     valor = unicodedata.normalize("NFD", (texto or "").lower())
     return "".join(c for c in valor if unicodedata.category(c) != "Mn")
+
+
+def _clasificar_anuncio_extendido(titulo: str) -> str:
+    n = _sin(titulo)
+    ajenos = (
+        "adscripcion definitiva",
+        "adscripcio definitiva",
+        "provision por concurso de meritos",
+        "provisio per concurs de merits",
+        "provision del puesto",
+        "provisio del lloc",
+        "provision de puesto",
+        "provisio de lloc",
+    )
+    if any(x in n for x in ajenos):
+        return "EXCLUIDO_INTERNO"
+    return _CLASIFICAR_ANUNCIO_ORIGINAL(titulo)
 
 
 def _palabras_significativas(texto: str | None) -> set[str]:
@@ -86,9 +104,6 @@ def _elegir_por_contenido(candidatos: list[dict[str, Any]], hallazgo: dict[str, 
         return None, "SIN_PROCESO_BOE_LOCAL_MUNICIPIO"
 
     titulo = hallazgo.get("titulo") or ""
-
-    # Cuando las bases originaron varios procesos en el mismo BOE (p. ej. libre y discapacidad),
-    # el turno explícito permite resolverlos sin depender solo de la denominación.
     compatibles_turno = []
     hubo_turno_explicito = False
     for proceso in candidatos:
@@ -120,7 +135,6 @@ def _elegir_por_contenido(candidatos: list[dict[str, Any]], hallazgo: dict[str, 
         if len(mejores) == 1:
             return mejores[0], "BOE_LOCAL_MUNICIPIO_DENOMINACION"
 
-    # Seguridad: si no hay evidencia suficiente, no se vincula automáticamente.
     return None, "BOE_LOCAL_AMBIGUO"
 
 
@@ -140,4 +154,5 @@ def buscar_proceso_seguimiento_extendido(cursor, hallazgo: dict[str, Any]) -> tu
 
 
 def aplicar_reglas_seguimiento_boe_local() -> None:
+    _municipios._clasificar_anuncio = _clasificar_anuncio_extendido
     _municipios._buscar_proceso_seguimiento = buscar_proceso_seguimiento_extendido
