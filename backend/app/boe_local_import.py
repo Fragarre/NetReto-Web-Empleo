@@ -27,15 +27,13 @@ def _familia(denominacion: str | None) -> str | None:
     n = _sin(denominacion)
     if "auxiliar administr" in n:
         return "AUXILIAR_ADMINISTRATIVO"
-    if "tecnico" in n and "administracion general" in n:
+    if ("tecnico" in n or "tecnica" in n or "tecnic" in n) and (
+        "administracion general" in n or "administracio general" in n
+    ):
         return "TAG"
-    if "tecnica" in n and "administracion general" in n:
-        return "TAG"
-    if "administrativo" in n or "administrativa" in n:
+    if any(x in n for x in ("administrativo", "administrativa", "administratiu", "administrativa")):
         return "ADMINISTRATIVO"
-    if "tecnico" in n and "gestion" in n:
-        return "TECNICO_GESTION"
-    if "tecnica" in n and "gestion" in n:
+    if ("tecnico" in n or "tecnica" in n or "tecnic" in n) and ("gestion" in n or "gestio" in n):
         return "TECNICO_GESTION"
     return None
 
@@ -66,7 +64,8 @@ def _candidatos_bop(
     denominacion: str | None,
     plazas: int | None,
 ) -> list[dict[str, Any]]:
-    if not fecha_bases:
+    familia = _familia(denominacion)
+    if not fecha_bases or not familia:
         return []
     cursor.execute(
         """
@@ -75,14 +74,14 @@ def _candidatos_bop(
         WHERE organismo_id=%s
           AND ambito_administrativo='SI'
           AND fecha_convocatoria=%s
+          AND identificador_estable LIKE 'BOPMUN:%%'
         ORDER BY id
         """,
         (organismo_id, fecha_bases),
     )
-    familia = _familia(denominacion)
     resultado = []
     for proceso in cursor.fetchall():
-        if familia and _familia(proceso.get("denominacion")) != familia:
+        if _familia(proceso.get("denominacion")) != familia:
             continue
         if plazas is not None and proceso.get("plazas") is not None and proceso.get("plazas") != plazas:
             continue
@@ -94,8 +93,52 @@ def _es_turno_interno(turno: str | None) -> bool:
     return "promocion interna" in _sin(turno)
 
 
+def _datos_boe(convocatoria: dict[str, Any], codigo: str) -> dict[str, Any]:
+    return {
+        "origen": "BOE_LOCAL",
+        "boe_id": convocatoria.get("boe_id"),
+        "codigo_externo": codigo,
+        "bases_bop": convocatoria.get("bases_bop"),
+        "plazo_solicitudes_literal": convocatoria.get("plazo_solicitudes_literal"),
+        "url_html": convocatoria.get("url_html"),
+        "url_xml": convocatoria.get("url_xml"),
+        "url_pdf": convocatoria.get("url_pdf"),
+        "texto_plaza": convocatoria.get("texto_plaza"),
+    }
+
+
+def _insertar_publicacion_boe(cursor, *, proceso_id: int, convocatoria: dict[str, Any], codigo: str) -> bool:
+    url = convocatoria.get("url_html")
+    if not url:
+        raise RuntimeError(f"URL BOE no disponible para {codigo}")
+    cursor.execute(
+        "SELECT 1 FROM publicaciones WHERE fuente_id=9 AND referencia=%s LIMIT 1",
+        (codigo,),
+    )
+    if cursor.fetchone() is not None:
+        return False
+    cursor.execute(
+        """
+        INSERT INTO publicaciones (
+            proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at
+        ) VALUES (%s,9,%s,'BOE',%s,%s,%s,%s,NOW())
+        """,
+        (
+            proceso_id, codigo, convocatoria.get("denominacion"),
+            convocatoria.get("fecha_boe"), url,
+            Jsonb({
+                "origen": "BOE_LOCAL",
+                "boe_id": convocatoria.get("boe_id"),
+                "codigo_externo": codigo,
+                "bases_bop": convocatoria.get("bases_bop"),
+            }),
+        ),
+    )
+    return True
+
+
 def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar: bool = False) -> dict[str, Any]:
-    """Previsualiza por defecto; solo inserta convocatorias nuevas seguras con aplicar=True."""
+    """Previsualiza por defecto; solo inserta o vincula convocatorias inequívocas con aplicar=True."""
     extraccion = extraer_convocatorias_boe_local(hasta=hasta, dias=dias)
     resultado: dict[str, Any] = {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
@@ -109,6 +152,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
         "nuevas": 0,
         "existentes_boe": 0,
         "posibles_existentes_bop": 0,
+        "vinculadas_bop": 0,
         "revision_solapamiento": 0,
         "insertados": 0,
         "organismos_creados": 0,
@@ -186,8 +230,35 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
 
             if len(candidatos) == 1:
                 resultado["posibles_existentes_bop"] += 1
+                candidato = candidatos[0]
+                item["proceso_bop_candidato"] = candidato
                 item["estado_importacion"] = "POSIBLE_EXISTENTE_BOP"
-                item["proceso_bop_candidato"] = candidatos[0]
+                if aplicar:
+                    proceso_id = candidato["id"]
+                    datos_boe = _datos_boe(convocatoria, codigo)
+                    cursor.execute(
+                        """
+                        UPDATE procesos
+                        SET datos_json = COALESCE(datos_json,'{}'::jsonb) || %s,
+                            ultima_publicacion_at = GREATEST(
+                                COALESCE(ultima_publicacion_at, %s::date::timestamptz),
+                                %s::date::timestamptz
+                            ),
+                            updated_at = NOW()
+                        WHERE id=%s
+                        """,
+                        (
+                            Jsonb({"boe_local": datos_boe}),
+                            convocatoria.get("fecha_boe"),
+                            convocatoria.get("fecha_boe"),
+                            proceso_id,
+                        ),
+                    )
+                    if _insertar_publicacion_boe(cursor, proceso_id=proceso_id, convocatoria=convocatoria, codigo=codigo):
+                        resultado["publicaciones_creadas"] += 1
+                    resultado["vinculadas_bop"] += 1
+                    item["proceso_id"] = proceso_id
+                    item["estado_importacion"] = "VINCULADA_BOP"
                 resultado["detalle"].append(item)
                 continue
             if len(candidatos) > 1:
@@ -219,16 +290,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                     resultado["organismos_creados"] += 1
                     item["organismo_id"] = organismo["id"]
 
-                datos_proceso = {
-                    "origen": "BOE_LOCAL",
-                    "boe_id": convocatoria.get("boe_id"),
-                    "bases_bop": convocatoria.get("bases_bop"),
-                    "plazo_solicitudes_literal": convocatoria.get("plazo_solicitudes_literal"),
-                    "url_html": convocatoria.get("url_html"),
-                    "url_xml": convocatoria.get("url_xml"),
-                    "url_pdf": convocatoria.get("url_pdf"),
-                    "texto_plaza": convocatoria.get("texto_plaza"),
-                }
+                datos_proceso = _datos_boe(convocatoria, codigo)
                 cursor.execute(
                     """
                     INSERT INTO procesos (
@@ -249,27 +311,8 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                 item["proceso_id"] = proceso_id
                 item["estado_importacion"] = "INSERTADA"
 
-                url = convocatoria.get("url_html")
-                if not url:
-                    raise RuntimeError(f"URL BOE no disponible para {codigo}")
-                cursor.execute(
-                    """
-                    INSERT INTO publicaciones (
-                        proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at
-                    ) VALUES (%s,9,%s,'BOE',%s,%s,%s,%s,NOW())
-                    """,
-                    (
-                        proceso_id, codigo, convocatoria.get("denominacion"),
-                        convocatoria.get("fecha_boe"), url,
-                        Jsonb({
-                            "origen": "BOE_LOCAL",
-                            "boe_id": convocatoria.get("boe_id"),
-                            "codigo_externo": codigo,
-                            "bases_bop": convocatoria.get("bases_bop"),
-                        }),
-                    ),
-                )
-                resultado["publicaciones_creadas"] += 1
+                if _insertar_publicacion_boe(cursor, proceso_id=proceso_id, convocatoria=convocatoria, codigo=codigo):
+                    resultado["publicaciones_creadas"] += 1
 
             resultado["detalle"].append(item)
 
