@@ -64,7 +64,6 @@ def limpiar_gva_stale() -> dict[str, Any]:
                     )
                     continue
 
-                id_emp = str((datos or {}).get("id_emp", ""))
                 motivo = "organismo_externo"
                 cursor.execute(
                     "DELETE FROM notificaciones WHERE cambio_id IN (SELECT id FROM cambios WHERE proceso_id = %s)",
@@ -83,31 +82,33 @@ def limpiar_gva_stale() -> dict[str, Any]:
 
 
 def corregir_turnos_gva() -> dict[str, int]:
-    """Corrige el turno cuando la propia denominación contiene un turno explícito."""
+    """Corrige el turno solo cuando la denominación exige un valor distinto."""
     resultado = {"turno_libre": 0, "promocion_interna": 0, "discapacidad_intelectual": 0, "discapacidad": 0}
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                UPDATE procesos
-                SET turno = CASE
-                    WHEN LOWER(denominacion) LIKE '%%turno libre%%' THEN 'TURNO_LIBRE'
-                    WHEN LOWER(denominacion) LIKE '%%promoción interna%%'
-                      OR LOWER(denominacion) LIKE '%%promocion interna%%' THEN 'PROMOCION_INTERNA'
-                    WHEN LOWER(denominacion) LIKE '%%discapacidad intelectual%%' THEN 'DISCAPACIDAD_INTELECTUAL'
-                    WHEN LOWER(denominacion) LIKE '%%discapacidad%%' THEN 'DISCAPACIDAD'
-                    ELSE turno
-                END,
+                WITH objetivos AS (
+                    SELECT id,
+                           CASE
+                               WHEN LOWER(denominacion) LIKE '%%discapacidad intelectual%%' THEN 'DISCAPACIDAD_INTELECTUAL'
+                               WHEN LOWER(denominacion) LIKE '%%promoción interna%%'
+                                 OR LOWER(denominacion) LIKE '%%promocion interna%%' THEN 'PROMOCION_INTERNA'
+                               WHEN LOWER(denominacion) LIKE '%%turno libre%%' THEN 'TURNO_LIBRE'
+                               WHEN LOWER(denominacion) LIKE '%%discapacidad%%' THEN 'DISCAPACIDAD'
+                               ELSE NULL
+                           END AS turno_objetivo
+                    FROM procesos
+                    WHERE organismo_id = %s
+                )
+                UPDATE procesos p
+                SET turno = o.turno_objetivo,
                     updated_at = NOW()
-                WHERE organismo_id = %s
-                  AND (
-                    LOWER(denominacion) LIKE '%%turno libre%%'
-                    OR LOWER(denominacion) LIKE '%%promoción interna%%'
-                    OR LOWER(denominacion) LIKE '%%promocion interna%%'
-                    OR LOWER(denominacion) LIKE '%%discapacidad intelectual%%'
-                    OR LOWER(denominacion) LIKE '%%discapacidad%%'
-                  )
-                RETURNING turno
+                FROM objetivos o
+                WHERE p.id = o.id
+                  AND o.turno_objetivo IS NOT NULL
+                  AND p.turno IS DISTINCT FROM o.turno_objetivo
+                RETURNING p.turno
                 """,
                 (GVA_ORGANISMO_ID,),
             )
