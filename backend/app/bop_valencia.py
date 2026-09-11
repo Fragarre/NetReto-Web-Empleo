@@ -293,8 +293,6 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
             with connection.cursor() as cursor:
                 for anuncio in anuncios:
                     fecha = anuncio["fecha_publicacion"]
-                    if fecha and fecha.year not in {2026, 2027}:
-                        continue
                     titulo = anuncio["titulo"]
                     registro = anuncio["registro"]
                     texto = _obtener_texto(client, anuncio["url"])
