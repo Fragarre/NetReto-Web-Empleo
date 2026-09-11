@@ -33,6 +33,8 @@ CAMPOS_NOVEDAD_GVA = (
     "estado", "plazas", "turno", "etapa_actual", "tipo_proceso", "url_oficial",
 )
 
+_ULTIMO_ERROR_DESCUBRIMIENTO_GVA: str | None = None
+
 
 def _sin(s: str) -> str:
     return base._sin_acentos(s or "")
@@ -148,8 +150,16 @@ def _detalles_existentes_a_seguir() -> list[tuple[int, str]]:
 
 
 def descubrir_detalles(client, max_paginas: int = 10) -> list[tuple[int, str]]:
-    """Une nuevas oportunidades con todos los procesos GVA conocidos no terminales."""
-    encontrados = dict(_BASE_DESCUBRIR_DETALLES(client, max_paginas=max_paginas))
+    """Une nuevas oportunidades con procesos conocidos sin bloquear su seguimiento."""
+    global _ULTIMO_ERROR_DESCUBRIMIENTO_GVA
+    _ULTIMO_ERROR_DESCUBRIMIENTO_GVA = None
+    encontrados: dict[int, str] = {}
+
+    try:
+        encontrados.update(_BASE_DESCUBRIR_DETALLES(client, max_paginas=max_paginas))
+    except Exception as exc:
+        _ULTIMO_ERROR_DESCUBRIMIENTO_GVA = f"{type(exc).__name__}: {exc}"
+
     for id_emp, url in _detalles_existentes_a_seguir():
         encontrados[id_emp] = url
     return sorted(encontrados.items())
@@ -264,6 +274,12 @@ def importar_gva_robusto(*, max_paginas: int = 10, max_detalles: int | None = No
     """
     etapas_antes = _etapas_guardadas()
     stats = _BASE_IMPORTAR_GVA_ROBUSTO(max_paginas=max_paginas, max_detalles=max_detalles)
+    if _ULTIMO_ERROR_DESCUBRIMIENTO_GVA:
+        stats["diagnostico"].append({
+            "motivo": "error_descubrimiento",
+            "fuente": base.GVA_SEARCH_URL,
+            "error": _ULTIMO_ERROR_DESCUBRIMIENTO_GVA,
+        })
     stats["cambios_etapa"] = _registrar_cambios_etapa(etapas_antes)
 
     actualizados = 0
