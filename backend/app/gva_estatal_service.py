@@ -5,6 +5,7 @@ from typing import Any
 
 from .gva_estatal_import import construir_registro
 from .gva_estatal_persist import persistir_registros
+from .gva_estatal_seguimiento import actualizar_seguimientos_gva
 from .gva_estatal_source import (
     clasificar_oportunidad,
     descubrir_referencias,
@@ -14,11 +15,11 @@ from .gva_estatal_source import (
 
 
 def importar_gva_estatal(*, desde: date, hasta: date, aplicar: bool = False) -> dict[str, Any]:
-    """Descubre y clasifica convocatorias GVA desde la fuente estatal oficial.
+    """Descubre convocatorias nuevas y revisa las fichas GVA ya conocidas.
 
     `aplicar=False` es el modo por defecto y no escribe en base de datos.
-    Las fechas delimitan únicamente la consulta solicitada; no son una regla de
-    vigencia ni de pertenencia al catálogo.
+    Las fechas delimitan únicamente el descubrimiento de nuevas convocatorias;
+    el seguimiento de procesos activos se hace por sus fichas ya persistidas.
     """
     if desde > hasta:
         raise ValueError("La fecha 'desde' no puede ser posterior a 'hasta'")
@@ -61,6 +62,7 @@ def importar_gva_estatal(*, desde: date, hasta: date, aplicar: bool = False) -> 
             excluidas[motivo] = excluidas.get(motivo, 0) + 1
 
     persistencia = persistir_registros(registros, aplicar=aplicar)
+    seguimiento = actualizar_seguimientos_gva(aplicar=aplicar)
     return {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
         "desde": desde.isoformat(),
@@ -71,4 +73,5 @@ def importar_gva_estatal(*, desde: date, hasta: date, aplicar: bool = False) -> 
         "excluidas": excluidas,
         "revision": revision,
         "persistencia": persistencia,
+        "seguimiento": seguimiento,
     }
