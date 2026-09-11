@@ -10,60 +10,47 @@ jobs:
   diagnostico:
     runs-on: ubuntu-latest
     steps:
-      - name: Consultar resultados oficiales 2026
+      - name: Validar descubrimiento por fecha de publicación
         run: |
           set -e
-          url='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=01%2F01%2F2026&fechaPublicacionHasta=11%2F09%2F2026&orders=id&sort=desc&tam=100'
-          curl -4 -L --fail --connect-timeout 10 --max-time 60 \
-            -A 'Mozilla/5.0' -o /tmp/resultados.html "$url"
-          echo "BYTES=$(wc -c </tmp/resultados.html)"
-          python - <<'PY'
+          for fecha in '27/03/2026' '20/04/2026' '14/05/2026' '08/07/2026'; do
+            enc=${fecha//\//%2F}
+            url="https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=${enc}&fechaPublicacionHasta=${enc}&orders=id&sort=desc&tam=100"
+            echo "=== FECHA $fecha ==="
+            curl -4 -L --fail --connect-timeout 10 --max-time 60 \
+              -A 'Mozilla/5.0' -o /tmp/resultados.html "$url"
+            python - <<'PY'
           import re
           from html import unescape
           html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
           texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
-          m=re.search(r'Total resultados:\s*([\d\.]+)',texto,re.I)
-          print('TOTAL',m.group(1) if m else 'NO_ENCONTRADO')
+          total=re.search(r'Total resultados:\s*([\d\.]+)',texto,re.I)
           refs=[]
           for x in re.finditer(r'(?:idRegistro|idConvocatoria)=(\d+)',html,re.I):
               if x.group(1) not in refs: refs.append(x.group(1))
-          print('REFERENCIAS_PAGINA',len(refs),refs[:120])
-          print('MENCIONES_CONSELLERIA_EHAP',texto.lower().count('conselleria de economía, hacienda y administración pública'.lower()))
+          print('TOTAL',total.group(1) if total else '?','REFS',refs)
+          for ref in ('219621','219862','220291','220197','221774'):
+              if ref in refs: print('ENCONTRADO_CONOCIDO',ref)
           PY
+          done
 
-      - name: Inspeccionar descargas XML CSV
+      - name: Comprobar detalles oficiales con curl
         run: |
-          python - <<'PY'
+          set -e
+          for ref in 219621 219862 220291 220197 221774; do
+            echo "=== REF $ref ==="
+            curl -4 -L --fail --connect-timeout 10 --max-time 30 \
+              --retry 2 --retry-delay 2 \
+              -A 'Mozilla/5.0' \
+              -o /tmp/detalle.html \
+              "https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm?idRegistro=$ref&idioma=es"
+            python - <<'PY'
           import re
           from html import unescape
-          html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
-          encontrados=[]
-          for m in re.finditer(r'href=["\']([^"\']+)["\']',html,re.I):
-              u=unescape(m.group(1))
-              if any(k in u.lower() for k in ('xml','csv','descarg')) and u not in encontrados:
-                  encontrados.append(u)
-          print('\n'.join(encontrados[:100]))
+          html=open('/tmp/detalle.html',encoding='utf-8',errors='replace').read()
+          texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
+          for p in ('A1-01','A2-05','C1-01','C2-01','C1-07','INGRESO LIBRE','COMUNITAT VALENCIANA','CORRECCIÓN DE ERRORES','ADMITIDOS Y/O EXCLUIDOS PROVISIONAL','TRIBUNAL'):
+              if p.lower() in texto.lower(): print(p)
+          print('LONGITUD',len(texto))
           PY
-
-      - name: Validar cuatro conocidos y buscar huecos administrativos
-        run: |
-          python - <<'PY'
-          import re, urllib.request
-          from html import unescape
-          base='https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm?idRegistro={}&idioma=es'
-          refs=['219621','220291','219862','220197','221774']
-          for ref in refs:
-              req=urllib.request.Request(base.format(ref),headers={'User-Agent':'Mozilla/5.0'})
-              with urllib.request.urlopen(req,timeout=30) as r:
-                  html=r.read().decode('utf-8','replace')
-              texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
-              print('\nREF',ref)
-              for patron in ('A1-01','A2-05','C1-01','C2-01','C1-07','INGRESO LIBRE','COMUNITAT VALENCIANA'):
-                  if patron.lower() in texto.lower(): print(' ',patron)
-              m=re.search(r'Hasta el\s+(\d{2}/\d{2}/\d{4})',texto,re.I)
-              print(' FIN_PLAZO',m.group(1) if m else None)
-              seg=[]
-              for p in ('ADMITIDOS Y/O EXCLUIDOS PROVISIONAL','ADMITIDOS Y/O EXCLUIDOS DEFINITIVO','TRIBUNAL','CORRECCIÓN DE ERRORES','FECHA DE EXAMEN','NOMBRAMIENTO'):
-                  if p.lower() in texto.lower(): seg.append(p)
-              print(' SEGUIMIENTO',seg)
-          PY
+          done
