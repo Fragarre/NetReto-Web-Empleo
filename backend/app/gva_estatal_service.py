@@ -103,6 +103,83 @@ def _descubrir_detalles_para_resolver(
     return sorted(encontrados.items()), diagnostico_red
 
 
+def diagnosticar_filtros_plazo_gva(id_emp_objetivo: int | None = None) -> dict[str, Any]:
+    """Prueba de solo lectura para identificar los valores reales de `plazos`.
+
+    No persiste nada ni modifica el resolver. Se prueban de forma aislada los
+    valores candidatos A, C y P, además de capturar controles `plazo` presentes
+    en el HTML devuelto por la variante A, que ya usa el importador ordinario.
+    """
+    variantes = ("A", "C", "P")
+    resultado: dict[str, Any] = {
+        "modo": "SOLO_DIAGNOSTICO",
+        "objetivo_id_emp": id_emp_objetivo,
+        "controles_plazo": [],
+        "variantes": [],
+    }
+
+    with nuevo_cliente() as client:
+        for valor in variantes:
+            params = {
+                "pagina": "1",
+                "tipoOrganismo": "1",
+                "plazos": valor,
+                "tamanyoPagina": "30",
+            }
+            try:
+                respuesta = _get_gva_con_reintentos(
+                    client,
+                    gva_clean.GVA_SEARCH_URL,
+                    params=params,
+                    intentos=1,
+                )
+                soup = BeautifulSoup(respuesta.text, "html.parser")
+                ids: list[int] = []
+                for enlace in soup.select('a[href*="detall-ocupacio-publica"]'):
+                    href = str(enlace.get("href") or "")
+                    m = re.search(r"id_emp=(\d+)", href)
+                    if m:
+                        ids.append(int(m.group(1)))
+                ids_unicos = sorted(set(ids))
+
+                if valor == "A":
+                    controles: list[dict[str, Any]] = []
+                    for elemento in soup.find_all(["input", "option", "select"]):
+                        nombre = str(elemento.get("name") or "")
+                        identificador = str(elemento.get("id") or "")
+                        if "plazo" not in nombre.lower() and "plazo" not in identificador.lower():
+                            continue
+                        controles.append({
+                            "tag": elemento.name,
+                            "name": nombre or None,
+                            "id": identificador or None,
+                            "value": elemento.get("value"),
+                            "texto": " ".join(elemento.get_text(" ", strip=True).split())[:160] or None,
+                        })
+                    resultado["controles_plazo"] = controles[:30]
+
+                resultado["variantes"].append({
+                    "plazos": valor,
+                    "ok": True,
+                    "status_code": respuesta.status_code,
+                    "url": str(respuesta.url),
+                    "fichas_en_pagina": len(ids_unicos),
+                    "muestra_id_emp": ids_unicos[:10],
+                    "contiene_objetivo": (
+                        id_emp_objetivo in ids_unicos if id_emp_objetivo is not None else None
+                    ),
+                })
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                resultado["variantes"].append({
+                    "plazos": valor,
+                    "ok": False,
+                    "url": str(getattr(getattr(exc, "request", None), "url", gva_clean.GVA_SEARCH_URL)),
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+
+    return resultado
+
+
 def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) -> dict[str, Any]:
     """Relaciona una alta estatal con su ficha de Sede GVA sin heurísticas débiles.
 
