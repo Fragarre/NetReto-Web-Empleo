@@ -9,6 +9,7 @@ on:
       - ".github/workflows/diagnostico-gva.yml"
       - "backend/app/gva_estatal_source.py"
       - "backend/scripts/validar_gva_estatal_source.py"
+      - "backend/requirements.txt"
 
 jobs:
   validar:
@@ -26,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install httpx beautifulsoup4
+        run: pip install -r requirements.txt
 
       - name: Validar ocho oportunidades oficiales conocidas
         run: PYTHONPATH=. python scripts/validar_gva_estatal_source.py
