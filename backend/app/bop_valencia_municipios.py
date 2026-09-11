@@ -250,7 +250,7 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
     hallazgos = [h for h in diagnostico["hallazgos"] if h["clase"] in ("NUEVA_CONVOCATORIA", "SEGUIMIENTO")]
     candidatas = [h for h in hallazgos if h["clase"] == "NUEVA_CONVOCATORIA"]
     seguimientos = [h for h in hallazgos if h["clase"] == "SEGUIMIENTO"]
-    resultado = {"modo": "APLICAR" if aplicar else "SOLO_REVISION", "desde": diagnostico["desde"], "hasta": diagnostico["hasta"], "candidatas": len(candidatas), "seguimientos": len(seguimientos), "dias_con_error": diagnostico["dias_con_error"], "nuevos": 0, "existentes": 0, "seguimientos_vinculados": 0, "seguimientos_revision": 0, "organismos_creados": 0, "detalle": []}
+    resultado = {"modo": "APLICAR" if aplicar else "SOLO_REVISION", "desde": diagnostico["desde"], "hasta": diagnostico["hasta"], "candidatas": len(candidatas), "seguimientos": len(seguimientos), "dias_con_error": diagnostico["dias_con_error"], "nuevos": 0, "existentes": 0, "seguimientos_vinculados": 0, "seguimientos_revision": 0, "seguimientos_sin_cambios": 0, "organismos_creados": 0, "detalle": []}
 
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("SELECT id FROM fuentes WHERE id=2")
@@ -267,29 +267,39 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                     continue
                 resultado["seguimientos_vinculados"] += 1
                 plazas_nuevas = _extraer_plazas(h["titulo"])
-                if plazas_nuevas is not None and plazas_nuevas != proceso.get("plazas"):
+                cambia_plazas = plazas_nuevas is not None and plazas_nuevas != proceso.get("plazas")
+                finaliza = _es_finalizacion(h["titulo"]) and proceso.get("estado") != "FINALIZADO"
+                if cambia_plazas:
                     item["plazas_anterior"] = proceso.get("plazas")
                     item["plazas_nueva"] = plazas_nuevas
-                if _es_finalizacion(h["titulo"]):
+                if finaliza:
                     item["estado_nuevo"] = "FINALIZADO"
                 if aplicar:
                     cursor.execute("SELECT id FROM publicaciones WHERE fuente_id=2 AND referencia=%s LIMIT 1", (h["registro"],))
                     pub = cursor.fetchone()
-                    if not pub:
+                    publicacion_nueva = pub is None
+                    if publicacion_nueva:
                         cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at) VALUES (%s,2,%s,'BOP',%s,%s,%s,%s,NOW()) RETURNING id", (proceso["id"], h["registro"], h["titulo"], h["fecha_publicacion"], h["url"], Jsonb({"origen": "BOP_VALENCIA_MUNICIPAL", "clase": "SEGUIMIENTO"})))
                         item["publicacion_id"] = cursor.fetchone()["id"]
                     else:
                         item["publicacion_id"] = pub["id"]
+
                     updates, params = [], []
-                    if plazas_nuevas is not None and plazas_nuevas != proceso.get("plazas"):
+                    if cambia_plazas:
                         updates.append("plazas=%s")
                         params.append(plazas_nuevas)
-                    if _es_finalizacion(h["titulo"]) and proceso.get("estado") != "FINALIZADO":
+                    if finaliza:
                         updates.append("estado='FINALIZADO'")
-                    updates.extend(["ultima_publicacion_at=%s", "updated_at=NOW()"])
-                    params.append(h["fecha_publicacion"])
-                    params.append(proceso["id"])
-                    cursor.execute(f"UPDATE procesos SET {','.join(updates)} WHERE id=%s", tuple(params))
+                    if publicacion_nueva:
+                        updates.append("ultima_publicacion_at=%s")
+                        params.append(h["fecha_publicacion"])
+                    if updates:
+                        updates.append("updated_at=NOW()")
+                        params.append(proceso["id"])
+                        cursor.execute(f"UPDATE procesos SET {','.join(updates)} WHERE id=%s", tuple(params))
+                    else:
+                        resultado["seguimientos_sin_cambios"] += 1
+                        item["estado_importacion"] = "SIN_CAMBIOS"
                 resultado["detalle"].append(item)
                 continue
 
@@ -314,7 +324,9 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
             visible = h.get("municipio_visible") or _nombre_municipio(municipio)
             if org:
                 organismo_id = org["id"]
-                cursor.execute("UPDATE organismos SET nombre=%s,activo=TRUE,updated_at=NOW() WHERE id=%s", (f"Ayuntamiento de {visible}", organismo_id))
+                nombre_esperado = f"Ayuntamiento de {visible}"
+                if org.get("nombre") != nombre_esperado:
+                    cursor.execute("UPDATE organismos SET nombre=%s,activo=TRUE,updated_at=NOW() WHERE id=%s", (nombre_esperado, organismo_id))
             else:
                 nombre = f"Ayuntamiento de {visible}"
                 cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id", (nombre, municipio))
