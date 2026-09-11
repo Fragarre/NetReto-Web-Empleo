@@ -26,16 +26,19 @@ def identificador_canonico(referencia: int) -> str:
 
 
 def construir_registro(tarjeta: dict, detalle: dict) -> dict:
-    """Construye un registro compatible con `procesos` sin escribir en BD.
+    """Construye el candidato de importación sin escribir en BD.
 
-    Esta función es deliberadamente pura: permite validar la nueva fuente y el
-    mapeo de identificadores antes de habilitar cualquier escritura.
+    Las cuatro convocatorias ya existentes se tratan como registros legacy:
+    la fuente estatal solo añade metadatos de enlace y nunca sustituye sus
+    campos consolidados. Esto es importante porque el agregador estatal puede
+    diferir de la publicación GVA en algún dato de detalle.
     """
     clasificado = clasificar_oportunidad(tarjeta, detalle)
     referencia = int(clasificado["referencia"])
     codigos = clasificado.get("codigos_administrativos") or []
     codigo = codigos[0] if len(codigos) == 1 else None
     via = clasificado.get("via")
+    es_legacy = referencia in LEGACY_ALIASES
 
     if via == "INGRESO_LIBRE":
         tipo_proceso = "Oposición"
@@ -53,6 +56,7 @@ def construir_registro(tarjeta: dict, detalle: dict) -> dict:
     return {
         "referencia_estatal": referencia,
         "identificador_estable": identificador_canonico(referencia),
+        "preservar_campos_existentes": es_legacy,
         "denominacion": clasificado.get("titulo") or f"Convocatoria estatal {referencia}",
         "cuerpo_escala": codigo,
         "grupo": codigo.split("-", 1)[0] if codigo else None,
@@ -63,6 +67,7 @@ def construir_registro(tarjeta: dict, detalle: dict) -> dict:
         "fecha_cierre": _fecha_iso_a_sql(clasificado.get("fecha_cierre")),
         "ambito_administrativo": clasificado.get("ambito_administrativo"),
         "es_oportunidad": bool(clasificado.get("es_oportunidad")),
+        "organismo_gva": clasificado.get("organismo_gva"),
         "datos_json": {
             "fuente_descubrimiento": "administracion.gob.es",
             "referencia_estatal": referencia,
