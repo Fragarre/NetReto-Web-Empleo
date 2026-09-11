@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 import re
+import time
 import unicodedata
-from dataclasses import dataclass
 from datetime import date, timedelta
 from urllib.parse import urljoin
 
@@ -36,6 +36,21 @@ def _sin(texto: str) -> str:
 
 def _limpio(texto: str) -> str:
     return " ".join((texto or "").replace("\xa0", " ").split())
+
+
+def _get(client: httpx.Client, url: str, *, params: dict | None = None) -> httpx.Response:
+    ultimo: Exception | None = None
+    for intento in range(1, 5):
+        try:
+            respuesta = client.get(url, params=params)
+            respuesta.raise_for_status()
+            return respuesta
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            ultimo = exc
+            if intento < 4:
+                time.sleep(2 * intento)
+    assert ultimo is not None
+    raise ultimo
 
 
 def _parse_total(soup: BeautifulSoup) -> int:
@@ -91,14 +106,12 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
     encontrados: dict[int, dict] = {}
     dia = desde
     while dia <= hasta:
-        r = client.get(RESULTADOS, params=_params_dia(dia, 1))
-        r.raise_for_status()
+        r = _get(client, RESULTADOS, params=_params_dia(dia, 1))
         total = _parse_total(BeautifulSoup(r.text, "html.parser"))
         paginas = max(1, math.ceil(total / TAM_PAGINA)) if total else 1
         tarjetas = _parse_tarjetas(r.text)
         for pagina in range(2, paginas + 1):
-            rp = client.get(RESULTADOS, params=_params_dia(dia, pagina))
-            rp.raise_for_status()
+            rp = _get(client, RESULTADOS, params=_params_dia(dia, pagina))
             tarjetas.extend(_parse_tarjetas(rp.text))
         if len({x["referencia"] for x in tarjetas}) != total:
             raise RuntimeError(f"Paginación incompleta en {dia.isoformat()}: {len(tarjetas)}/{total}")
@@ -135,7 +148,6 @@ def parsear_detalle(referencia: int, html: str) -> dict:
     texto = _limpio(soup.get_text(" ", strip=True))
     titulo_tag = soup.find("h1") or soup.find("h2")
     titulo = _limpio(titulo_tag.get_text(" ", strip=True)) if titulo_tag else ""
-    # En algunas versiones el primer h1/h2 es genérico; la tarjeta sigue siendo la referencia canónica del título.
     m_org = re.search(r"[ÓO]rgano convocante\s+(.+?)(?=\s+Requisitos\b|\s+Observaciones\b|\s+Más información\b|\s+Plazo de presentación\b)", texto, re.I)
     m_personal = re.search(r"Tipo de personal\s+(.+?)(?=\s+Tipo de vía\b)", texto, re.I)
     m_inicio = re.search(r"Desde el\s+(\d{2}/\d{2}/\d{4})", texto, re.I)
@@ -153,16 +165,13 @@ def parsear_detalle(referencia: int, html: str) -> dict:
 
 
 def obtener_detalle(client: httpx.Client, referencia: int) -> dict:
-    r = client.get(DETALLE, params={"idConvocatoria": referencia, "idioma": "es"})
-    r.raise_for_status()
+    r = _get(client, DETALLE, params={"idConvocatoria": referencia, "idioma": "es"})
     return parsear_detalle(referencia, r.text)
 
 
 def clasificar_oportunidad(tarjeta: dict, detalle: dict) -> dict:
     es_admin, codigos = _es_admin(tarjeta.get("titulo") or "", detalle.get("texto") or "")
     via = detalle.get("via")
-    # La búsqueda ya está restringida a AUTONÓMICO - COMUNITAT VALENCIANA. Se excluyen
-    # expresamente universidades y administraciones locales si aparecen por anomalía del portal.
     org = _sin(tarjeta.get("organo") or detalle.get("organo_detalle") or "")
     organismo_valido = not any(x in org for x in ("universitat", "universidad", "ayuntamiento", "ajuntament", "diputacion", "diputacio"))
     incluida = bool(es_admin and organismo_valido and via in VIAS_INCLUIDAS)
