@@ -91,6 +91,22 @@ def _estado_plazo_solicitud(texto: str) -> str | None:
     return None
 
 
+def _es_etapa_solicitud(etapa: str | None) -> bool:
+    """Identifica solo etapas cuyo plazo corresponde a presentar solicitudes."""
+    n = _sin(etapa or "")
+    return any(
+        patron in n
+        for patron in (
+            "bases y apertura de plazo",
+            "bases i obertura de termini",
+            "apertura de plazo",
+            "obertura de termini",
+            "presentacion de solicitudes",
+            "presentacio de sollicituds",
+        )
+    )
+
+
 def _estado_ciclo_selectivo(texto: str) -> str:
     """Estado del proceso selectivo, independiente del plazo de inscripción."""
     etapa = _sin(_etapa_actual(texto) or "").strip()
@@ -178,21 +194,43 @@ def parsear_detalle(url: str, html: str, id_emp: int) -> dict[str, Any]:
     etapa_actual = _etapa_actual(texto)
     estado_plazo = _estado_plazo_solicitud(texto)
     fecha_etapa = proceso.get("fecha_etapa")
+    etapa_fecha_apertura = proceso.get("fecha_apertura")
+    etapa_fecha_cierre = proceso.get("fecha_cierre")
+    etapa_solicitud = _es_etapa_solicitud(etapa_actual)
 
     proceso["organismo_id"] = organismo_id
     proceso["estado"] = _estado_ciclo_selectivo(texto)
     if fecha_etapa and etapa_actual and "base" in _sin(etapa_actual):
         proceso["fecha_convocatoria"] = fecha_etapa
 
-    proceso["datos_json"] = {
-        **(proceso.get("datos_json") or {}),
+    # fecha_apertura/fecha_cierre representan exclusivamente el plazo original
+    # de presentación de solicitudes. Los plazos de alegaciones u otras etapas
+    # se conservan aparte en datos_json y nunca sustituyen al plazo original.
+    if not etapa_solicitud:
+        proceso["fecha_apertura"] = None
+        proceso["fecha_cierre"] = None
+
+    datos_nuevos = {
         "organismo_detectado": organismo_texto,
         "organismo_enlace": organismo_enlace,
         "organismo_id_resuelto": organismo_id,
         "organismo_motivo": motivo,
         "etapa_actual": etapa_actual,
-        "estado_plazo_solicitud": estado_plazo,
+        "estado_plazo_etapa_actual": estado_plazo,
         "etapa_actual_fecha_publicacion": fecha_etapa.isoformat() if fecha_etapa else None,
+        "etapa_actual_fecha_apertura": etapa_fecha_apertura.isoformat() if etapa_fecha_apertura else None,
+        "etapa_actual_fecha_cierre": etapa_fecha_cierre.isoformat() if etapa_fecha_cierre else None,
+    }
+    if etapa_solicitud:
+        datos_nuevos.update({
+            "estado_plazo_solicitud": estado_plazo,
+            "fecha_apertura_solicitud": etapa_fecha_apertura.isoformat() if etapa_fecha_apertura else None,
+            "fecha_cierre_solicitud": etapa_fecha_cierre.isoformat() if etapa_fecha_cierre else None,
+        })
+
+    proceso["datos_json"] = {
+        **(proceso.get("datos_json") or {}),
+        **datos_nuevos,
     }
     return proceso
 
