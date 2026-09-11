@@ -1,0 +1,60 @@
+name: Auditoría histórica GVA estatal
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - auditoria-gva-estatal
+    paths:
+      - ".github/workflows/auditoria-gva-historica.yml"
+      - "backend/scripts/auditar_gva_estatal.py"
+
+jobs:
+  auditar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install httpx beautifulsoup4
+
+      - name: Auditar 2020-2025 en solo lectura
+        continue-on-error: true
+        run: |
+          python scripts/auditar_gva_estatal.py \
+            --desde 2020-01-01 \
+            --hasta 2025-12-31 \
+            --salida auditoria_gva_estatal_2020_2025.json
+
+      - name: Mostrar resumen
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('auditoria_gva_estatal_2020_2025.json')
+          if not p.exists():
+              print('SIN_INFORME')
+              raise SystemExit(1)
+          d=json.loads(p.read_text(encoding='utf-8'))
+          for k in ('auditoria_completa','dias_consultados','paginas_consultadas','tarjetas_autonomico_cv','incluidas','promocion_interna','revision_manual','errores'):
+              v=d.get(k)
+              print(k, len(v) if isinstance(v,list) else v)
+          print('REFERENCIAS_INCLUIDAS', [x.get('referencia') for x in d.get('incluidas',[])])
+          PY
+
+      - name: Guardar informe
+        uses: actions/upload-artifact@v4
+        with:
+          name: auditoria-gva-estatal-2020-2025
+          path: backend/auditoria_gva_estatal_2020_2025.json
+          if-no-files-found: error
