@@ -10,43 +10,28 @@ jobs:
   diagnostico:
     runs-on: ubuntu-latest
     steps:
-      - name: Resolver DNS de fuentes oficiales
+      - name: Probar sumario diario DOGV
         run: |
           python - <<'PY'
-          import socket
-          for host in ('sede.gva.es','dogv.gva.es','hisenda.gva.es','administracion.gob.es'):
-              print('\nHOST', host)
-              try:
-                  for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM):
-                      print(item)
-              except Exception as exc:
-                  print(type(exc).__name__, exc)
+          import urllib.request
+          url='https://dogv.gva.es/datos/2026/09/11/PortalCAS.html'
+          req=urllib.request.Request(url,headers={'User-Agent':'NetReto-Empleo/0.1 (https://netexamenes.com)'})
+          with urllib.request.urlopen(req,timeout=20) as r:
+              data=r.read().decode('utf-8','replace')
+              print('STATUS',r.status)
+              print('BYTES',len(data))
+              print('TIENE_SECCION_EMPLEO', 'OFERTAS DE EMPLEO PÚBLICO' in data.upper())
+              print(data[:1200])
           PY
 
-      - name: Probar Sede GVA
-        continue-on-error: true
+      - name: Probar DOGV documento oficial
         run: |
-          curl -4 -v --connect-timeout 10 --max-time 20 -o /dev/null \
-            -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
-            'https://sede.gva.es/detall-ocupacio-publica?id_emp=110206'
-
-      - name: Probar DOGV
-        continue-on-error: true
-        run: |
-          curl -4 -v --connect-timeout 10 --max-time 20 -o /dev/null \
+          curl -4 --fail --connect-timeout 10 --max-time 20 -o /dev/null \
             -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
             'https://dogv.gva.es/datos/2026/05/14/pdf/2026_14981_es.pdf'
 
-      - name: Probar portal de Hacienda GVA
-        continue-on-error: true
-        run: |
-          curl -4 -v --connect-timeout 10 --max-time 20 -o /dev/null \
-            -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
-            'https://hisenda.gva.es/es/web/recursos-humanos/oferta-ocupacio-publica-2026'
-
       - name: Probar Administracion.gob.es
-        continue-on-error: true
         run: |
-          curl -4 -v --connect-timeout 10 --max-time 20 -o /dev/null \
+          curl -4 --fail --connect-timeout 10 --max-time 20 -o /dev/null \
             -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
             'https://administracion.gob.es/pagFront/ofertasempleopublico/detalleEmpleo.htm?idConvocatoria=220291'
