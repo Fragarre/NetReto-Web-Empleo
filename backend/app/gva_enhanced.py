@@ -266,11 +266,20 @@ def _desactivar_cambios_tecnicos_gva() -> int:
         return actualizados
 
 
+def _errores_fuente(stats: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item for item in stats.get("diagnostico", [])
+        if item.get("motivo") in {"error_descubrimiento", "error_detalle"}
+    ]
+
+
 def importar_gva_robusto(*, max_paginas: int = 10, max_detalles: int | None = None) -> dict[str, Any]:
     """Importa GVA y sigue las fichas conocidas hasta su cierre selectivo real.
 
     El cierre del plazo de solicitudes se conserva como dato y no finaliza el
-    proceso. Las decisiones manuales SI/NO nunca se sobrescriben.
+    proceso. Las decisiones manuales SI/NO nunca se sobrescriben. Si la fuente
+    oficial queda incompleta, no se ejecutan tareas de mantenimiento globales
+    sobre registros GVA existentes.
     """
     etapas_antes = _etapas_guardadas()
     stats = _BASE_IMPORTAR_GVA_ROBUSTO(max_paginas=max_paginas, max_detalles=max_detalles)
@@ -280,7 +289,17 @@ def importar_gva_robusto(*, max_paginas: int = 10, max_detalles: int | None = No
             "fuente": base.GVA_SEARCH_URL,
             "error": _ULTIMO_ERROR_DESCUBRIMIENTO_GVA,
         })
+
+    errores = _errores_fuente(stats)
+    stats["estado_importacion"] = "INCOMPLETA" if errores else "COMPLETA"
+    stats["errores_fuente"] = len(errores)
     stats["cambios_etapa"] = _registrar_cambios_etapa(etapas_antes)
+
+    if errores:
+        stats["ambito_administrativo_actualizados"] = 0
+        stats["cambios_tecnicos_desactivados"] = 0
+        stats["mantenimiento_global_omitido"] = True
+        return stats
 
     actualizados = 0
     with get_connection() as connection, connection.cursor() as cursor:
@@ -300,6 +319,7 @@ def importar_gva_robusto(*, max_paginas: int = 10, max_detalles: int | None = No
         connection.commit()
     stats["ambito_administrativo_actualizados"] = actualizados
     stats["cambios_tecnicos_desactivados"] = _desactivar_cambios_tecnicos_gva()
+    stats["mantenimiento_global_omitido"] = False
     return stats
 
 
