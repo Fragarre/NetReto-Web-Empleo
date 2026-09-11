@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feature/gva-fuente-estatal
+      - feature/empleo-correcciones-auditoria
     paths:
       - ".github/workflows/validar-gva-estatal-feature.yml"
       - "backend/app/gva_estatal_source.py"
