@@ -211,17 +211,20 @@ def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = Non
                     campos = ["denominacion", "grupo", "tipo_proceso", "turno", "plazas", "estado", "anio_convocatoria", "fecha_apertura", "fecha_cierre"]
                     cursor.execute("SELECT id, denominacion, grupo, tipo_proceso, turno, plazas, estado, anio_convocatoria, fecha_apertura, fecha_cierre FROM procesos WHERE identificador_estable=%s", (proceso["identificador_estable"],))
                     existente = cursor.fetchone()
-                    valores = tuple(proceso.get(c) for c in campos)
+                    valores = [proceso.get(c) for c in campos]
                     if existente:
                         proceso_id = existente[0]
+                        for indice, campo in enumerate(campos):
+                            if campo in {"fecha_apertura", "fecha_cierre"} and valores[indice] is None:
+                                valores[indice] = existente[indice + 1]
                         for i, campo in enumerate(campos, start=1):
                             anterior, nuevo = existente[i], valores[i - 1]
                             if anterior != nuevo:
                                 cursor.execute("INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen) VALUES (%s,%s,%s,%s,%s,%s)", (proceso_id, "ACTUALIZACION", campo, str(anterior) if anterior is not None else None, str(nuevo) if nuevo is not None else None, f"Cambio en {campo}: {anterior!r} -> {nuevo!r}"))
                                 stats["cambios"] += 1
-                        cursor.execute("UPDATE procesos SET organismo_id=%s,codigo_externo=%s,denominacion=%s,grupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_apertura=%s,fecha_cierre=%s,ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,datos_json=%s,updated_at=NOW() WHERE id=%s", (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"]), proceso_id))
+                        cursor.execute("UPDATE procesos SET organismo_id=%s,codigo_externo=%s,denominacion=%s,grupo=%s,tipo_proceso=%s,turno=%s,plazas=%s,estado=%s,anio_convocatoria=%s,fecha_apertura=%s,fecha_cierre=%s,ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,datos_json=COALESCE(datos_json,'{}'::jsonb) || %s,updated_at=NOW() WHERE id=%s", (GVA_ORGANISMO_ID, proceso["codigo_externo"], valores[0], valores[1], valores[2], valores[3], valores[4], valores[5], valores[6], valores[7], valores[8], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"]), proceso_id))
                     else:
-                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_apertura,fecha_cierre,ultima_publicacion_at,fuente_principal_id,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["identificador_estable"], proceso["denominacion"], proceso["grupo"], proceso["tipo_proceso"], proceso["turno"], proceso["plazas"], proceso["estado"], proceso["anio_convocatoria"], proceso["fecha_apertura"], proceso["fecha_cierre"], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"])))
+                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_apertura,fecha_cierre,ultima_publicacion_at,fuente_principal_id,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (GVA_ORGANISMO_ID, proceso["codigo_externo"], proceso["identificador_estable"], valores[0], valores[1], valores[2], valores[3], valores[4], valores[5], valores[6], valores[7], valores[8], proceso["ultima_publicacion_at"], GVA_FUENTE_ID, Jsonb(proceso["datos_json"])))
                         proceso_id = cursor.fetchone()[0]
                     stats["procesos"] += 1
                     pub = proceso["publicacion"]
