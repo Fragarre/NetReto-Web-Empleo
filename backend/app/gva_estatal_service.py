@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import re
+import time
 from typing import Any
 from urllib.parse import urljoin
 
@@ -26,6 +27,28 @@ def _signatura_dogv(url: str | None) -> str | None:
     return f"{m.group(1)}_{m.group(2)}" if m else None
 
 
+def _get_gva_con_reintentos(
+    client: httpx.Client,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    intentos: int = 3,
+) -> httpx.Response:
+    """GET GVA con reintentos limitados ante fallos transitorios de red."""
+    ultimo: Exception | None = None
+    for intento in range(1, intentos + 1):
+        try:
+            respuesta = client.get(url, params=params)
+            respuesta.raise_for_status()
+            return respuesta
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            ultimo = exc
+            if intento < intentos:
+                time.sleep(2 * intento)
+    assert ultimo is not None
+    raise ultimo
+
+
 def _descubrir_detalles_para_resolver(
     client: httpx.Client,
     max_paginas: int = 10,
@@ -42,15 +65,15 @@ def _descubrir_detalles_para_resolver(
 
     for pagina in range(1, max_paginas + 1):
         try:
-            respuesta = client.get(
+            respuesta = _get_gva_con_reintentos(
+                client,
                 gva_clean.GVA_SEARCH_URL,
                 params={
-                    "pagina": pagina,
+                    "pagina": str(pagina),
                     "tipoOrganismo": "1",
                     "tamanyoPagina": "30",
                 },
             )
-            respuesta.raise_for_status()
         except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
             diagnostico_red.append({
                 "fase": "listado",
@@ -118,8 +141,7 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
 
     for id_emp, url in detalles:
         try:
-            respuesta = client.get(url)
-            respuesta.raise_for_status()
+            respuesta = _get_gva_con_reintentos(client, url)
             html = respuesta.text
         except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
             diagnostico_red.append({
