@@ -12,7 +12,7 @@ from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
-from .gva_estatal_service import importar_gva_estatal
+from .gva_estatal_service import diagnosticar_filtros_plazo_gva, importar_gva_estatal
 from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
 from .ayuntamiento_alicante import diagnosticar_ayuntamiento_alicante, importar_ayuntamiento_alicante
 from .empleo_admin import (
@@ -193,6 +193,17 @@ def importar_gva_estatal_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación GVA estatal: {exc}") from exc
+
+@app.get("/admin/debug/gva-plazos")
+def debug_gva_plazos(
+    x_import_secret: str | None = Header(default=None),
+    id_emp_objetivo: int | None = Query(default=None, ge=1),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return diagnosticar_filtros_plazo_gva(id_emp_objetivo=id_emp_objetivo)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en diagnóstico de plazos GVA: {exc}") from exc
 
 @app.post("/admin/cleanup/gva-stale")
 def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
