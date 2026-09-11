@@ -187,9 +187,19 @@ def importar_gva_robusto(*, max_paginas: int = 3, max_detalles: int | None = Non
         with get_connection() as connection:
             with connection.cursor() as cursor:
                 for id_emp, url in detalles:
-                    respuesta = client.get(url)
-                    respuesta.raise_for_status()
-                    proceso = parsear_detalle(url, respuesta.text, id_emp)
+                    try:
+                        respuesta = client.get(url)
+                        respuesta.raise_for_status()
+                        proceso = parsear_detalle(url, respuesta.text, id_emp)
+                    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                        stats["diagnostico"].append({
+                            "id_emp": id_emp,
+                            "url": url,
+                            "motivo": "error_detalle",
+                            "error": f"{type(exc).__name__}: {exc}",
+                        })
+                        continue
+
                     tipo = proceso.get("tipo_proceso")
                     if not _es_incluido(tipo) or not _es_del_ambito(proceso):
                         stats["diagnostico"].append({"id_emp": id_emp, "url": url, "tipo": tipo, "anio_convocatoria": proceso.get("anio_convocatoria"), "fecha_publicacion": proceso["publicacion"].get("fecha_publicacion"), "motivo": "tipo_excluido" if not _es_incluido(tipo) else "fuera_ambito"})
