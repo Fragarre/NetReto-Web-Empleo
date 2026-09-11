@@ -3,6 +3,8 @@ name: Diagnóstico conectividad GVA
 on:
   workflow_dispatch:
   push:
+    branches:
+      - auditoria-gva-estatal
     paths:
       - ".github/workflows/diagnostico-gva.yml"
 
@@ -10,47 +12,24 @@ jobs:
   diagnostico:
     runs-on: ubuntu-latest
     steps:
-      - name: Validar descubrimiento por fecha de publicación
+      - name: Inspeccionar buscador avanzado oficial
         run: |
           set -e
-          for fecha in '27/03/2026' '20/04/2026' '14/05/2026' '08/07/2026'; do
-            enc=${fecha//\//%2F}
-            url="https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=${enc}&fechaPublicacionHasta=${enc}&orders=id&sort=desc&tam=100"
-            echo "=== FECHA $fecha ==="
-            curl -4 -L --fail --connect-timeout 10 --max-time 60 \
-              -A 'Mozilla/5.0' -o /tmp/resultados.html "$url"
-            python - <<'PY'
-          import re
-          from html import unescape
-          html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
-          texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
-          total=re.search(r'Total resultados:\s*([\d\.]+)',texto,re.I)
-          refs=[]
-          for x in re.finditer(r'(?:idRegistro|idConvocatoria)=(\d+)',html,re.I):
-              if x.group(1) not in refs: refs.append(x.group(1))
-          print('TOTAL',total.group(1) if total else '?','REFS',refs)
-          for ref in ('219621','219862','220291','220197','221774'):
-              if ref in refs: print('ENCONTRADO_CONOCIDO',ref)
+          curl -4 -L --fail --connect-timeout 10 --max-time 30 \
+            -A 'Mozilla/5.0' \
+            -o /tmp/avanzado.html \
+            'https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleoAvanzado.htm'
+          python - <<'PY'
+          from bs4 import BeautifulSoup
+          html=open('/tmp/avanzado.html',encoding='utf-8',errors='replace').read()
+          soup=BeautifulSoup(html,'html.parser')
+          for sel in soup.find_all('select'):
+              print('\nSELECT',sel.get('name'),sel.get('id'))
+              for opt in sel.find_all('option'):
+                  txt=' '.join(opt.get_text(' ',strip=True).split())
+                  if txt:
+                      print(' ',repr(opt.get('value')),txt[:160])
+          for inp in soup.find_all('input'):
+              if inp.get('name'):
+                  print('INPUT',inp.get('name'),repr(inp.get('value')),inp.get('type'))
           PY
-          done
-
-      - name: Comprobar detalles oficiales con curl
-        run: |
-          set -e
-          for ref in 219621 219862 220291 220197 221774; do
-            echo "=== REF $ref ==="
-            curl -4 -L --fail --connect-timeout 10 --max-time 30 \
-              --retry 2 --retry-delay 2 \
-              -A 'Mozilla/5.0' \
-              -o /tmp/detalle.html \
-              "https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm?idRegistro=$ref&idioma=es"
-            python - <<'PY'
-          import re
-          from html import unescape
-          html=open('/tmp/detalle.html',encoding='utf-8',errors='replace').read()
-          texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
-          for p in ('A1-01','A2-05','C1-01','C2-01','C1-07','INGRESO LIBRE','COMUNITAT VALENCIANA','CORRECCIÓN DE ERRORES','ADMITIDOS Y/O EXCLUIDOS PROVISIONAL','TRIBUNAL'):
-              if p.lower() in texto.lower(): print(p)
-          print('LONGITUD',len(texto))
-          PY
-          done
