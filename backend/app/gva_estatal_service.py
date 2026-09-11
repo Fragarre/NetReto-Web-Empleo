@@ -4,6 +4,8 @@ from datetime import date
 import re
 from typing import Any
 
+import httpx
+
 from . import gva_clean
 from .gva_estatal_import import construir_registro
 from .gva_estatal_persist import persistir_registros
@@ -29,6 +31,9 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
     convocatoria aparece en exactamente una ficha descubierta en la Sede GVA.
     Si no hay coincidencia o hay más de una, el proceso sigue siendo válido pero
     se deja sin ficha para volver a intentarlo en una ejecución posterior.
+
+    Los fallos puntuales de red o timeout de la Sede GVA no bloquean la
+    importación estatal: la ficha queda pendiente y se podrá resolver después.
     """
     pendientes: dict[str, list[dict[str, Any]]] = {}
     for registro in registros:
@@ -40,18 +45,45 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
             pendientes.setdefault(signatura, []).append(registro)
 
     if not pendientes:
-        return {"pendientes": 0, "resueltas": 0, "sin_coincidencia": 0, "ambiguas": 0}
+        return {
+            "pendientes": 0,
+            "resueltas": 0,
+            "sin_coincidencia": 0,
+            "ambiguas": 0,
+            "errores_red": 0,
+        }
 
     candidatas_por_signatura: dict[str, list[tuple[int, str]]] = {
         signatura: [] for signatura in pendientes
     }
-    detalles = gva_clean.descubrir_detalles(client, max_paginas=10)
+    errores_red = 0
+
+    try:
+        detalles = gva_clean.descubrir_detalles(client, max_paginas=10)
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError):
+        return {
+            "pendientes": sum(len(v) for v in pendientes.values()),
+            "resueltas": 0,
+            "sin_coincidencia": 0,
+            "ambiguas": 0,
+            "errores_red": 1,
+        }
 
     for id_emp, url in detalles:
-        respuesta = client.get(url)
-        respuesta.raise_for_status()
-        html = respuesta.text
+        try:
+            respuesta = client.get(url)
+            respuesta.raise_for_status()
+            html = respuesta.text
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError):
+            errores_red += 1
+            continue
+
         for signatura in pendientes:
+            # Con dos coincidencias la signatura ya es ambigua; no necesita
+            # seguir comparándose con más fichas, aunque sí continuamos el
+            # recorrido para poder resolver las demás signaturas pendientes.
+            if len(candidatas_por_signatura[signatura]) >= 2:
+                continue
             if signatura in html:
                 candidatas_por_signatura[signatura].append((int(id_emp), str(url)))
 
@@ -81,6 +113,7 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
         "resueltas": resueltas,
         "sin_coincidencia": sin_coincidencia,
         "ambiguas": ambiguas,
+        "errores_red": errores_red,
     }
 
 
