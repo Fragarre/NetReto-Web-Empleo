@@ -1,4 +1,4 @@
-name: OPS verificar GVA producción
+name: OPS actualización completa Empleo
 
 on:
   push:
@@ -8,19 +8,22 @@ on:
       - ".github/workflows/ops-gva-produccion-validacion.yml"
 
 jobs:
-  verificar:
+  actualizar:
     runs-on: ubuntu-latest
     steps:
-      - name: Verificar segunda pasada GVA en solo revisión
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencia mínima
+        run: pip install httpx
+
+      - name: Ejecutar actualización completa contra producción
         env:
           EMPLOYMENT_IMPORT_SECRET: ${{ secrets.EMPLOYMENT_IMPORT_SECRET }}
-        run: |
-          set -euo pipefail
-          test -n "$EMPLOYMENT_IMPORT_SECRET"
-          for fecha in 2026-03-04 2026-03-27 2026-04-20 2026-04-27 2026-05-08 2026-05-14 2026-07-08; do
-            echo "=== $fecha ==="
-            response=$(curl -fsS --max-time 90 -X POST \
-              "https://netreto-empleo-api.onrender.com/admin/import/gva-estatal?desde=$fecha&hasta=$fecha&aplicar=false" \
-              -H "X-Import-Secret: $EMPLOYMENT_IMPORT_SECRET")
-            echo "$response" | python -m json.tool
-          done
+          NETRETO_EMPLEO_API_URL: https://netreto-empleo-api.onrender.com
+        run: python backend/app/cron_actualizacion.py
