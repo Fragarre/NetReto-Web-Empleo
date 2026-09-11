@@ -15,24 +15,26 @@ jobs:
       - name: Instalar parser
         run: pip install beautifulsoup4
 
-      - name: Inspeccionar buscador avanzado oficial
+      - name: Inspeccionar tarjeta de resultado conocida
         run: |
           set -e
-          curl -4 -L --fail --connect-timeout 10 --max-time 30 \
-            -A 'Mozilla/5.0' \
-            -o /tmp/avanzado.html \
-            'https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleoAvanzado.htm'
+          url='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=08%2F07%2F2026&fechaPublicacionHasta=08%2F07%2F2026&orders=id&sort=desc&tam=100'
+          curl -4 -L --fail --retry 4 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 15 --max-time 60 -A 'Mozilla/5.0' \
+            -o /tmp/resultados.html "$url"
           python - <<'PY'
           from bs4 import BeautifulSoup
-          html=open('/tmp/avanzado.html',encoding='utf-8',errors='replace').read()
+          import re
+          html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
           soup=BeautifulSoup(html,'html.parser')
-          for sel in soup.find_all('select'):
-              print('\nSELECT',sel.get('name'),sel.get('id'))
-              for opt in sel.find_all('option'):
-                  txt=' '.join(opt.get_text(' ',strip=True).split())
-                  if txt:
-                      print(' ',repr(opt.get('value')),txt[:160])
-          for inp in soup.find_all('input'):
-              if inp.get('name'):
-                  print('INPUT',inp.get('name'),repr(inp.get('value')),inp.get('type'))
+          a=soup.find('a',href=re.compile(r'(idRegistro|idConvocatoria)=221774'))
+          print('ENLACE',a.get('href') if a else None)
+          n=a
+          for i in range(6):
+              if not n: break
+              n=n.parent
+              if not n: break
+              texto=' '.join(n.get_text(' ',strip=True).split())
+              print('NIVEL',i+1,'TAG',n.name,'CLASS',n.get('class'),'ID',n.get('id'),'LEN',len(texto))
+              print(texto[:1800])
           PY
