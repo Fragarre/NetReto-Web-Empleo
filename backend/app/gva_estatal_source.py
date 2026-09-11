@@ -27,6 +27,25 @@ PATRONES_ADMIN = (
     r"\btecnico tributario\b",
     r"\bagentes? tributarios?\b",
 )
+PATRONES_ORGANISMO_GVA = (
+    "generalitat valenciana",
+    "presidencia de la generalitat",
+    "vicepresidencia",
+    "conselleria",
+    "labora",
+    "agencia valenciana",
+    "agencia tributaria valenciana",
+    "institut valencia",
+    "instituto valenciano",
+)
+PATRONES_ORGANISMO_NO_GVA = (
+    "universitat",
+    "universidad",
+    "ayuntamiento",
+    "ajuntament",
+    "diputacion",
+    "diputacio",
+)
 
 
 def _sin(texto: str) -> str:
@@ -143,6 +162,15 @@ def _es_admin(titulo: str, texto: str) -> tuple[bool, list[str]]:
     return bool(codigos or any(re.search(p, nt) for p in PATRONES_ADMIN)), codigos
 
 
+def _clasificar_organismo(texto: str | None) -> str:
+    n = _sin(texto or "")
+    if any(p in n for p in PATRONES_ORGANISMO_NO_GVA):
+        return "NO"
+    if any(p in n for p in PATRONES_ORGANISMO_GVA):
+        return "SI"
+    return "REVISION"
+
+
 def parsear_detalle(referencia: int, html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     texto = _limpio(soup.get_text(" ", strip=True))
@@ -172,20 +200,20 @@ def obtener_detalle(client: httpx.Client, referencia: int) -> dict:
 def clasificar_oportunidad(tarjeta: dict, detalle: dict) -> dict:
     es_admin, codigos = _es_admin(tarjeta.get("titulo") or "", detalle.get("texto") or "")
     via = detalle.get("via")
-    org = _sin(tarjeta.get("organo") or detalle.get("organo_detalle") or "")
-    organismo_valido = not any(x in org for x in ("universitat", "universidad", "ayuntamiento", "ajuntament", "diputacion", "diputacio"))
-    incluida = bool(es_admin and organismo_valido and via in VIAS_INCLUIDAS)
+    organismo_estado = _clasificar_organismo(tarjeta.get("organo") or detalle.get("organo_detalle"))
+    incluida = bool(es_admin and organismo_estado == "SI" and via in VIAS_INCLUIDAS)
     return {
         **tarjeta,
         **{k: v for k, v in detalle.items() if k != "texto"},
         "codigos_administrativos": codigos,
         "ambito_administrativo": "SI" if es_admin else "NO",
-        "organismo_valido": organismo_valido,
+        "organismo_gva": organismo_estado,
         "es_oportunidad": incluida,
         "motivo": "incluida" if incluida else (
             "promocion_interna" if via == "PROMOCION_INTERNA" else
             "fuera_ambito_administrativo" if not es_admin else
-            "organismo_excluido" if not organismo_valido else
+            "organismo_excluido" if organismo_estado == "NO" else
+            "organismo_revision" if organismo_estado == "REVISION" else
             "via_no_incluida"
         ),
     }
