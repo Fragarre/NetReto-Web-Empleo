@@ -168,7 +168,13 @@ def importar_gva_endpoint(x_import_secret: str | None = Header(default=None), ma
     _validar_import_secret(x_import_secret)
     try:
         resultado = importar_gva_robusto(max_paginas=max_paginas, max_detalles=max_detalles)
-        resultado["limpieza_stale"] = limpiar_gva_stale(); resultado["correccion_turnos"] = corregir_turnos_gva(); return resultado
+        if resultado.get("estado_importacion") == "COMPLETA":
+            resultado["limpieza_stale"] = limpiar_gva_stale()
+            resultado["correccion_turnos"] = corregir_turnos_gva()
+        else:
+            resultado["limpieza_stale"] = {"omitida": True, "motivo": "fuente_gva_incompleta"}
+            resultado["correccion_turnos"] = {"omitida": True, "motivo": "fuente_gva_incompleta"}
+        return resultado
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
 
 @app.post("/admin/cleanup/gva-stale")
