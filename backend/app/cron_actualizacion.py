@@ -29,6 +29,26 @@ REINTENTOS = 3
 ESPERAS_REINTENTO = (10, 30)
 
 
+def _respuesta_incompleta(path: str, data: object) -> str | None:
+    """Detecta respuestas HTTP 200 que no representan una actualización completa."""
+    if not path.startswith("/admin/import/gva") or not isinstance(data, dict):
+        return None
+
+    if data.get("estado_importacion") == "INCOMPLETA":
+        return f"GVA incompleta: {data.get('errores_fuente', 0)} error(es) de fuente"
+
+    diagnostico = data.get("diagnostico")
+    if isinstance(diagnostico, list):
+        errores = [
+            item for item in diagnostico
+            if isinstance(item, dict)
+            and item.get("motivo") in {"error_descubrimiento", "error_detalle"}
+        ]
+        if errores:
+            return f"GVA incompleta: {len(errores)} error(es) de fuente"
+    return None
+
+
 def _post(client: httpx.Client, path: str) -> None:
     ultima_excepcion: Exception | None = None
 
@@ -50,9 +70,15 @@ def _post(client: httpx.Client, path: str) -> None:
                 )
                 response.raise_for_status()
 
-            print(path, response.json())
+            data = response.json()
+            print(path, data)
+            incompleta = _respuesta_incompleta(path, data)
+            if incompleta:
+                raise ValueError(incompleta)
             return
 
+        except ValueError:
+            raise
         except httpx.HTTPStatusError as exc:
             ultima_excepcion = exc
             if exc.response.status_code < 500 or intento == REINTENTOS:
