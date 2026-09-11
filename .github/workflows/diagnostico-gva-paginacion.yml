@@ -1,0 +1,35 @@
+name: Diagnóstico paginación GVA estatal
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - auditoria-gva-estatal
+    paths:
+      - ".github/workflows/diagnostico-gva-paginacion.yml"
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspeccionar enlaces de paginación
+        run: |
+          set -e
+          url='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=09%2F07%2F2026&fechaPublicacionHasta=09%2F07%2F2026&orders=id&sort=desc&tam=100'
+          curl -4 -L --fail --retry 4 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 15 --max-time 60 -A 'Mozilla/5.0' -o /tmp/r.html "$url"
+          python - <<'PY'
+          import re
+          from html import unescape
+          h=open('/tmp/r.html',encoding='utf-8',errors='replace').read()
+          links=[]
+          for m in re.finditer(r'href=["\']([^"\']+)["\']',h,re.I):
+              u=unescape(m.group(1))
+              if any(k in u.lower() for k in ('page','pagina','pag=','offset','inicio','tam=')):
+                  if u not in links: links.append(u)
+          print('LINKS')
+          for u in links[-80:]: print(u)
+          for pat in (r'name=["\']([^"\']*(?:page|pag|offset|inicio)[^"\']*)["\']', r'currentPage[^\n<]{0,200}', r'totalPages[^\n<]{0,200}'):
+              print('PATTERN',pat)
+              for x in re.findall(pat,h,re.I)[:50]: print(x)
+          PY
