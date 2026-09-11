@@ -10,49 +10,49 @@ jobs:
   diagnostico:
     runs-on: ubuntu-latest
     steps:
-      - name: Comparar sumarios DOGV
+      - name: Probar búsquedas oficiales conocidas
         run: |
-          set +e
-          for url in \
-            'https://dogv.gva.es/datos/2026/09/11/PortalCAS.html' \
-            'https://dogv.gva.es/datos/2024/07/03/PortalCAS.html'; do
-            echo "URL=$url"
-            curl -4 -L -sS --connect-timeout 10 --max-time 20 \
-              -A 'Mozilla/5.0' \
-              -D /tmp/headers.txt -o /tmp/body.html "$url"
-            rc=$?
-            echo "RC=$rc"
-            head -20 /tmp/headers.txt
-            echo "BYTES=$(wc -c </tmp/body.html 2>/dev/null || echo 0)"
-            grep -oi 'OFERTAS DE EMPLEO PÚBLICO' /tmp/body.html | head || true
-          done
-          exit 0
-
-      - name: Inspeccionar formulario oficial de empleo estatal
-        run: |
+          set -e
+          base='https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm'
           curl -4 -L --fail --connect-timeout 10 --max-time 30 \
-            -A 'Mozilla/5.0' \
-            -o /tmp/buscador.html \
-            'https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm'
-          echo "BYTES=$(wc -c </tmp/buscador.html)"
-          python - <<'PY'
-          from html.parser import HTMLParser
-
-          class P(HTMLParser):
-              def handle_starttag(self, tag, attrs):
-                  d=dict(attrs)
-                  if tag=='form':
-                      print('FORM', d.get('action'), d.get('method'))
-                  elif tag in {'input','select','option'}:
-                      name=d.get('name')
-                      if name or tag=='option':
-                          print(tag.upper(), 'name=',name,'value=',d.get('value'),'id=',d.get('id'))
-          html=open('/tmp/buscador.html',encoding='utf-8',errors='replace').read()
-          P().feed(html)
+            -A 'Mozilla/5.0' -c /tmp/cookies.txt -o /tmp/inicio.html "$base"
+          for q in '70/26' '50/26' '58/26' '68/26'; do
+            echo "=== BUSQUEDA $q ==="
+            curl -4 -L --fail --connect-timeout 10 --max-time 30 \
+              -A 'Mozilla/5.0' -b /tmp/cookies.txt -c /tmp/cookies.txt \
+              --data-urlencode "textoBusquedaSimple=$q" \
+              --data 'busquedaRealizada=true' \
+              -o /tmp/resultado.html "$base"
+            echo "BYTES=$(wc -c </tmp/resultado.html)"
+            python - <<'PY'
+          import re
+          from html import unescape
+          html=open('/tmp/resultado.html',encoding='utf-8',errors='replace').read()
+          enlaces=[]
+          for m in re.finditer(r'href=["\']([^"\']*(?:detalleEmpleo|buscadorEmpleo)[^"\']*)["\']', html, re.I):
+              url=unescape(m.group(1))
+              if url not in enlaces:
+                  enlaces.append(url)
+          print('ENLACES', len(enlaces))
+          for url in enlaces[:20]: print(url)
+          texto=re.sub(r'<[^>]+>',' ',html)
+          texto=unescape(re.sub(r'\s+',' ',texto))
+          for patron in ('70/26','50/26','58/26','68/26','Generalitat'):
+              print(patron, texto.lower().count(patron.lower()))
           PY
+          done
 
-      - name: Probar detalle oficial estatal
+      - name: Confirmar detalle y seguimiento oficial
         run: |
-          curl -4 -L --fail --connect-timeout 10 --max-time 20 -o /dev/null \
+          curl -4 -L --fail --connect-timeout 10 --max-time 20 \
             -A 'Mozilla/5.0' \
+            -o /tmp/detalle.html \
             'https://administracion.gob.es/pagFront/ofertasempleopublico/detalleEmpleo.htm?idConvocatoria=220291&idioma=es'
+          python - <<'PY'
+          import re
+          from html import unescape
+          html=open('/tmp/detalle.html',encoding='utf-8',errors='replace').read()
+          texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
+          for patron in ('50/26','ADMITIDOS Y/O EXCLUIDOS PROVISIONAL','TRIBUNAL','22/05/2026'):
+              print(patron, patron.lower() in texto.lower())
+          PY
