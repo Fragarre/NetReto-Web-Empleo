@@ -12,26 +12,20 @@ jobs:
   diagnostico:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspeccionar enlaces de paginación
+      - name: Validar páginas oficiales
         run: |
           set -e
-          url='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=09%2F07%2F2026&fechaPublicacionHasta=09%2F07%2F2026&orders=id&sort=desc&tam=100'
-          curl -4 -L --fail --retry 4 --retry-all-errors --retry-delay 3 \
-            --connect-timeout 15 --max-time 60 -A 'Mozilla/5.0' -o /tmp/r.html "$url"
-          python - <<'PY'
-          import re
-          from html import unescape
-          h=open('/tmp/r.html',encoding='utf-8',errors='replace').read()
-          links=[]
-          for m in re.finditer(r'href=["\']([^"\']+)["\']',h,re.I):
-              u=unescape(m.group(1))
-              if any(k in u.lower() for k in ('page','pagina','pag=','offset','inicio','tam=')):
-                  if u not in links: links.append(u)
-          print('LINKS')
-          for u in links[-100:]: print(u)
-          print('FRAGMENTOS_PAGINACION')
-          for line in h.splitlines():
-              if any(k in line.lower() for k in ('pagin', 'siguiente', 'anterior', 'page=', 'pagina=')):
-                  s=' '.join(line.split())
-                  if s: print(s[:2000])
+          base='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=09%2F07%2F2026&fechaPublicacionHasta=09%2F07%2F2026&orders=id&sort=desc&tam=100'
+          for p in 1 2 3; do
+            url="$base&desde=$p"
+            curl -4 -L --fail --retry 4 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 60 -A 'Mozilla/5.0' -o "/tmp/r$p.html" "$url"
+            P="$p" python - <<'PY'
+          import os,re
+          h=open('/tmp/r'+os.environ['P']+'.html',encoding='utf-8',errors='replace').read()
+          refs=[]
+          for x in re.finditer(r'idConvocatoria=(\d+)',h):
+              if x.group(1) not in refs: refs.append(x.group(1))
+          m=re.search(r'name=["\']numPaginaActual["\'][^>]*value=["\'](\d+)',h,re.I)
+          print('SOLICITADA',os.environ['P'],'ACTUAL',m.group(1) if m else '?','N',len(refs),'PRIMEROS',refs[:3],'ULTIMOS',refs[-3:])
           PY
+          done
