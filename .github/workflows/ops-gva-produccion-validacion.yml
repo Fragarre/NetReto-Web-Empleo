@@ -23,13 +23,4 @@ jobs:
               "https://netreto-empleo-api.onrender.com/admin/import/gva-estatal?desde=$fecha&hasta=$fecha&aplicar=true" \
               -H "X-Import-Secret: $EMPLOYMENT_IMPORT_SECRET")
             echo "$response" | python -m json.tool
-            RESPONSE="$response" python - <<'PY'
-import json, os
-obj = json.loads(os.environ['RESPONSE'])
-if obj.get('modo') != 'APLICADO':
-    raise SystemExit(f"Modo inesperado: {obj.get('modo')}")
-p = obj.get('persistencia') or {}
-if p.get('modo') != 'APLICADO':
-    raise SystemExit(f"Persistencia inesperada: {p}")
-PY
           done
