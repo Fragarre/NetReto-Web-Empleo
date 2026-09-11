@@ -4,14 +4,11 @@ from datetime import datetime
 
 from .gva_estatal_source import clasificar_oportunidad
 
-# Correspondencias verificadas entre las referencias estatales y los cuatro
-# procesos GVA ya existentes en producción. Se preserva el identificador actual
-# para no romper suscripciones, URLs internas ni referencias históricas.
 LEGACY_ALIASES: dict[int, str] = {
-    219621: "GVA:110135",  # C2-01, convocatoria 70/26
-    219862: "GVA:110206",  # C1-01, convocatoria 58/26
-    220197: "GVA:110235",  # C1-07, convocatoria 68/26
-    220291: "GVA:110202",  # A2-05, convocatoria 50/26
+    219621: "GVA:110135",
+    219862: "GVA:110206",
+    220197: "GVA:110235",
+    220291: "GVA:110202",
 }
 
 
@@ -26,13 +23,6 @@ def identificador_canonico(referencia: int) -> str:
 
 
 def construir_registro(tarjeta: dict, detalle: dict) -> dict:
-    """Construye el candidato de importación sin escribir en BD.
-
-    Las cuatro convocatorias ya existentes se tratan como registros legacy:
-    la fuente estatal solo añade metadatos de enlace y nunca sustituye sus
-    campos consolidados. Esto es importante porque el agregador estatal puede
-    diferir de la publicación GVA en algún dato de detalle.
-    """
     clasificado = clasificar_oportunidad(tarjeta, detalle)
     referencia = int(clasificado["referencia"])
     codigos = clasificado.get("codigos_administrativos") or []
@@ -76,5 +66,7 @@ def construir_registro(tarjeta: dict, detalle: dict) -> dict:
             "via_estatal": via,
             "codigos_administrativos": codigos,
             "fecha_publicacion_busqueda": clasificado.get("fecha_publicacion_busqueda"),
+            "url_publicacion_oficial": clasificado.get("publicacion_oficial_url"),
+            "fecha_publicacion_oficial": clasificado.get("publicacion_oficial_fecha"),
         },
     }
