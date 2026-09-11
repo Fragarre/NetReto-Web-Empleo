@@ -1,4 +1,4 @@
-name: Auditoría GVA estatal
+name: Validación fuente estatal GVA
 
 on:
   workflow_dispatch:
@@ -7,11 +7,15 @@ on:
       - auditoria-gva-estatal
     paths:
       - ".github/workflows/diagnostico-gva.yml"
-      - "backend/scripts/auditar_gva_estatal.py"
+      - "backend/app/gva_estatal_source.py"
+      - "backend/scripts/validar_gva_estatal_source.py"
 
 jobs:
-  auditoria:
+  validar:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,41 +28,5 @@ jobs:
       - name: Instalar dependencias
         run: pip install httpx beautifulsoup4
 
-      - name: Auditar GVA 2026 en solo lectura
-        continue-on-error: true
-        run: |
-          python backend/scripts/auditar_gva_estatal.py \
-            --desde 2026-01-01 \
-            --hasta 2026-09-11 \
-            --salida auditoria_gva_estatal.json
-
-      - name: Mostrar resumen
-        if: always()
-        run: |
-          python - <<'PY'
-          import json, pathlib
-          p=pathlib.Path('auditoria_gva_estatal.json')
-          if not p.exists():
-              raise SystemExit('No se generó el informe de auditoría')
-          d=json.loads(p.read_text(encoding='utf-8'))
-          print('AUDITORIA_COMPLETA=',d['auditoria_completa'])
-          print('DIAS=',d['dias_consultados'])
-          print('PAGINAS=',d['paginas_consultadas'])
-          print('TARJETAS_AUTONOMICO_CV=',d['tarjetas_autonomico_cv'])
-          print('INCLUIDOS=',len(d['incluidos_automaticos']))
-          print('REVISION=',len(d['revision_manual']))
-          print('PROMOCION_INTERNA=',len(d['promocion_interna_excluida']))
-          print('ERRORES=',len(d['errores']))
-          for x in d['incluidos_automaticos']:
-              print('INCLUIDO',x['referencia'],x['titulo'],'|',x.get('codigos_administrativos'),'|',x.get('organo'))
-          for e in d['errores'][:100]:
-              print('ERROR',e)
-          PY
-
-      - name: Guardar informe
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: auditoria-gva-estatal-2026-paginada
-          path: auditoria_gva_estatal.json
-          if-no-files-found: error
+      - name: Validar ocho oportunidades oficiales conocidas
+        run: python scripts/validar_gva_estatal_source.py
