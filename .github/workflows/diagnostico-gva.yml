@@ -10,49 +10,60 @@ jobs:
   diagnostico:
     runs-on: ubuntu-latest
     steps:
-      - name: Probar búsquedas oficiales conocidas
+      - name: Consultar resultados oficiales 2026
         run: |
           set -e
-          base='https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm'
-          curl -4 -L --fail --connect-timeout 10 --max-time 30 \
-            -A 'Mozilla/5.0' -c /tmp/cookies.txt -o /tmp/inicio.html "$base"
-          for q in '70/26' '50/26' '58/26' '68/26'; do
-            echo "=== BUSQUEDA $q ==="
-            curl -4 -L --fail --connect-timeout 10 --max-time 30 \
-              -A 'Mozilla/5.0' -b /tmp/cookies.txt -c /tmp/cookies.txt \
-              --data-urlencode "textoBusquedaSimple=$q" \
-              --data 'busquedaRealizada=true' \
-              -o /tmp/resultado.html "$base"
-            echo "BYTES=$(wc -c </tmp/resultado.html)"
-            python - <<'PY'
-          import re
-          from html import unescape
-          html=open('/tmp/resultado.html',encoding='utf-8',errors='replace').read()
-          enlaces=[]
-          for m in re.finditer(r'href=["\']([^"\']*(?:detalleEmpleo|buscadorEmpleo)[^"\']*)["\']', html, re.I):
-              url=unescape(m.group(1))
-              if url not in enlaces:
-                  enlaces.append(url)
-          print('ENLACES', len(enlaces))
-          for url in enlaces[:20]: print(url)
-          texto=re.sub(r'<[^>]+>',' ',html)
-          texto=unescape(re.sub(r'\s+',' ',texto))
-          for patron in ('70/26','50/26','58/26','68/26','Generalitat'):
-              print(patron, texto.lower().count(patron.lower()))
-          PY
-          done
-
-      - name: Confirmar detalle y seguimiento oficial
-        run: |
-          curl -4 -L --fail --connect-timeout 10 --max-time 20 \
-            -A 'Mozilla/5.0' \
-            -o /tmp/detalle.html \
-            'https://administracion.gob.es/pagFront/ofertasempleopublico/detalleEmpleo.htm?idConvocatoria=220291&idioma=es'
+          url='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=01%2F01%2F2026&fechaPublicacionHasta=11%2F09%2F2026&orders=id&sort=desc&tam=100'
+          curl -4 -L --fail --connect-timeout 10 --max-time 60 \
+            -A 'Mozilla/5.0' -o /tmp/resultados.html "$url"
+          echo "BYTES=$(wc -c </tmp/resultados.html)"
           python - <<'PY'
           import re
           from html import unescape
-          html=open('/tmp/detalle.html',encoding='utf-8',errors='replace').read()
+          html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
           texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
-          for patron in ('50/26','ADMITIDOS Y/O EXCLUIDOS PROVISIONAL','TRIBUNAL','22/05/2026'):
-              print(patron, patron.lower() in texto.lower())
+          m=re.search(r'Total resultados:\s*([\d\.]+)',texto,re.I)
+          print('TOTAL',m.group(1) if m else 'NO_ENCONTRADO')
+          refs=[]
+          for x in re.finditer(r'(?:idRegistro|idConvocatoria)=(\d+)',html,re.I):
+              if x.group(1) not in refs: refs.append(x.group(1))
+          print('REFERENCIAS_PAGINA',len(refs),refs[:120])
+          print('MENCIONES_CONSELLERIA_EHAP',texto.lower().count('conselleria de economía, hacienda y administración pública'.lower()))
+          PY
+
+      - name: Inspeccionar descargas XML CSV
+        run: |
+          python - <<'PY'
+          import re
+          from html import unescape
+          html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
+          encontrados=[]
+          for m in re.finditer(r'href=["\']([^"\']+)["\']',html,re.I):
+              u=unescape(m.group(1))
+              if any(k in u.lower() for k in ('xml','csv','descarg')) and u not in encontrados:
+                  encontrados.append(u)
+          print('\n'.join(encontrados[:100]))
+          PY
+
+      - name: Validar cuatro conocidos y buscar huecos administrativos
+        run: |
+          python - <<'PY'
+          import re, urllib.request
+          from html import unescape
+          base='https://administracion.gob.es/pagFront/empleoBecas/empleo/buscadorEmpleo.htm?idRegistro={}&idioma=es'
+          refs=['219621','220291','219862','220197','221774']
+          for ref in refs:
+              req=urllib.request.Request(base.format(ref),headers={'User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req,timeout=30) as r:
+                  html=r.read().decode('utf-8','replace')
+              texto=unescape(re.sub(r'\s+',' ',re.sub(r'<[^>]+>',' ',html)))
+              print('\nREF',ref)
+              for patron in ('A1-01','A2-05','C1-01','C2-01','C1-07','INGRESO LIBRE','COMUNITAT VALENCIANA'):
+                  if patron.lower() in texto.lower(): print(' ',patron)
+              m=re.search(r'Hasta el\s+(\d{2}/\d{2}/\d{4})',texto,re.I)
+              print(' FIN_PLAZO',m.group(1) if m else None)
+              seg=[]
+              for p in ('ADMITIDOS Y/O EXCLUIDOS PROVISIONAL','ADMITIDOS Y/O EXCLUIDOS DEFINITIVO','TRIBUNAL','CORRECCIÓN DE ERRORES','FECHA DE EXAMEN','NOMBRAMIENTO'):
+                  if p.lower() in texto.lower(): seg.append(p)
+              print(' SEGUIMIENTO',seg)
           PY
