@@ -14,12 +14,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install httpx beautifulsoup4
-      - name: Inspeccionar contexto estructural DOGV
+      - name: Inspeccionar A1-01
         run: |
           python - <<'PY'
           import httpx
           from bs4 import BeautifulSoup
-          ref=219862
+          ref=221774
           url=f"https://administracion.gob.es/pagFront/ofertasempleopublico/detalleEmpleo.htm?idConvocatoria={ref}&idioma=es"
           r=httpx.get(url,timeout=60,follow_redirects=True,headers={"User-Agent":"NetReto-Empleo/1.0 (https://netexamenes.com)"})
           r.raise_for_status()
@@ -28,11 +28,9 @@ jobs:
               href=str(a.get("href") or "")
               if "dogv.gva.es" not in href.lower():
                   continue
+              dd=a.find_parent("dd")
+              row=a.find_parent("div",class_=lambda c: c and "detalle-content-row" in c)
               print("\nHREF",href)
-              node=a
-              for nivel in range(1,6):
-                  node=node.parent
-                  if node is None: break
-                  texto=" ".join(node.get_text(" ",strip=True).split())
-                  print(f"L{nivel} <{node.name}> class={node.get('class')} id={node.get('id')} :: {texto[:1800]}")
+              print("DD", " ".join(dd.get_text(" ",strip=True).split())[:1800] if dd else None)
+              print("ROW", " ".join(row.get_text(" ",strip=True).split())[:2200] if row else None)
           PY
