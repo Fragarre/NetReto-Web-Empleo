@@ -171,6 +171,24 @@ def _clasificar_organismo(texto: str | None) -> str:
     return "REVISION"
 
 
+def _extraer_publicacion_dogv(soup: BeautifulSoup) -> tuple[str | None, str | None]:
+    """Devuelve el primer PDF DOGV del detalle y su fecha inferida de la URL.
+
+    En las fichas estatales, las disposiciones oficiales aparecen antes que los
+    seguimientos. El primer enlace DOGV es por tanto la publicación primaria de
+    la convocatoria. Si no puede identificarse de forma inequívoca, no se inventa.
+    """
+    for enlace in soup.find_all("a", href=True):
+        href = str(enlace.get("href") or "")
+        if "dogv.gva.es/" not in href.lower() or ".pdf" not in href.lower():
+            continue
+        url = urljoin(BASE, href)
+        m = re.search(r"/datos/(\d{4})/(\d{2})/(\d{2})/pdf/", url, re.I)
+        fecha = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+        return url, fecha
+    return None, None
+
+
 def parsear_detalle(referencia: int, html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     texto = _limpio(soup.get_text(" ", strip=True))
@@ -180,6 +198,7 @@ def parsear_detalle(referencia: int, html: str) -> dict:
     m_personal = re.search(r"Tipo de personal\s+(.+?)(?=\s+Tipo de vía\b)", texto, re.I)
     m_inicio = re.search(r"Desde el\s+(\d{2}/\d{2}/\d{4})", texto, re.I)
     m_fin = re.search(r"Hasta el\s+(\d{2}/\d{2}/\d{4})", texto, re.I)
+    dogv_url, dogv_fecha = _extraer_publicacion_dogv(soup)
     return {
         "referencia": referencia,
         "texto": texto,
@@ -189,6 +208,8 @@ def parsear_detalle(referencia: int, html: str) -> dict:
         "via": _extraer_via(texto),
         "fecha_apertura": m_inicio.group(1) if m_inicio else None,
         "fecha_cierre": m_fin.group(1) if m_fin else None,
+        "publicacion_oficial_url": dogv_url,
+        "publicacion_oficial_fecha": dogv_fecha,
     }
 
 
