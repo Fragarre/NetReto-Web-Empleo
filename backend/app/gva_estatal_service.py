@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import date
 import re
 from typing import Any
+from urllib.parse import urljoin
 
 import httpx
+from bs4 import BeautifulSoup
 
 from . import gva_clean
 from .gva_estatal_import import construir_registro
@@ -22,6 +24,45 @@ def _signatura_dogv(url: str | None) -> str | None:
     """Extrae la signatura estable YYYY_NUM de una URL PDF del DOGV."""
     m = re.search(r"/pdf/(\d{4})_(\d+)_", str(url or ""), re.I)
     return f"{m.group(1)}_{m.group(2)}" if m else None
+
+
+def _descubrir_detalles_para_resolver(client: httpx.Client, max_paginas: int = 10) -> list[tuple[int, str]]:
+    """Descubre fichas GVA sin limitarse a plazos de solicitud abiertos.
+
+    Es una búsqueda auxiliar exclusiva para resolver el id_emp de una
+    convocatoria ya identificada por la fuente estatal. No cambia el
+    descubrimiento ordinario de convocatorias GVA, que sigue usando
+    gva_clean.descubrir_detalles() con plazos=A.
+    """
+    encontrados: dict[int, str] = {}
+    for pagina in range(1, max_paginas + 1):
+        respuesta = client.get(
+            gva_clean.GVA_SEARCH_URL,
+            params={
+                "pagina": pagina,
+                "tipoOrganismo": "1",
+                "tamanyoPagina": "30",
+            },
+        )
+        respuesta.raise_for_status()
+        soup = BeautifulSoup(respuesta.text, "html.parser")
+        encontrados_pagina = 0
+        for enlace in soup.select('a[href*="detall-ocupacio-publica"]'):
+            href = enlace.get("href")
+            if not href:
+                continue
+            m = re.search(r"id_emp=(\d+)", href)
+            if not m:
+                continue
+            id_emp = int(m.group(1))
+            encontrados[id_emp] = urljoin(gva_clean.GVA_BASE_URL, href)
+            encontrados_pagina += 1
+
+        # Si la página no contiene ninguna ficha, no quedan más resultados.
+        if encontrados_pagina == 0:
+            break
+
+    return sorted(encontrados.items())
 
 
 def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) -> dict[str, Any]:
@@ -59,7 +100,7 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
     errores_red = 0
 
     try:
-        detalles = gva_clean.descubrir_detalles(client, max_paginas=10)
+        detalles = _descubrir_detalles_para_resolver(client, max_paginas=10)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError):
         return {
             "pendientes": sum(len(v) for v in pendientes.values()),
@@ -93,7 +134,10 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
 
     for signatura, registros_signatura in pendientes.items():
         candidatas = candidatas_por_signatura.get(signatura) or []
-        if len(candidatas) == 1:
+        # Una coincidencia solo es concluyente si se pudieron revisar todas las
+        # fichas candidatas sin errores de red. Con páginas omitidas no podemos
+        # demostrar que no exista una segunda coincidencia.
+        if len(candidatas) == 1 and errores_red == 0:
             id_emp, url = candidatas[0]
             for registro in registros_signatura:
                 datos = dict(registro.get("datos_json") or {})
