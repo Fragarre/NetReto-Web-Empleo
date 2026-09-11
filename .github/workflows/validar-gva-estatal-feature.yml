@@ -9,7 +9,9 @@ on:
       - ".github/workflows/validar-gva-estatal-feature.yml"
       - "backend/app/gva_estatal_source.py"
       - "backend/app/gva_estatal_import.py"
+      - "backend/app/gva_estatal_persist.py"
       - "backend/scripts/validar_gva_estatal_import.py"
+      - "backend/scripts/validar_gva_estatal_persist.py"
 
 jobs:
   validar:
@@ -31,3 +33,6 @@ jobs:
 
       - name: Validar integración sin escritura en BD
         run: PYTHONPATH=. python scripts/validar_gva_estatal_import.py
+
+      - name: Validar persistencia idempotente en solo revisión
+        run: PYTHONPATH=. python scripts/validar_gva_estatal_persist.py
