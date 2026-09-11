@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 
 import httpx
 
@@ -14,14 +14,9 @@ SECRET = os.getenv("EMPLOYMENT_IMPORT_SECRET")
 # Ventanas técnicas de solape. NO son criterios de inclusión: una oportunidad
 # permanece en catálogo mientras su proceso selectivo siga activo, cualquiera
 # que sea su antigüedad.
+VENTANA_GVA_DIAS = 3
 VENTANA_BOE_DIAS = 30
 VENTANA_BOP_DIAS = 7
-
-# El buscador GVA devuelve 30 resultados por página. Tres páginas son suficientes
-# para el descubrimiento diario; además, el importador vuelve a consultar todos
-# los procesos GVA ya conocidos y no terminales aunque hayan desaparecido del
-# listado de plazo abierto.
-GVA_PAGINAS_DIARIAS = 3
 
 # Render puede estar reiniciando una instancia o una fuente oficial puede sufrir
 # un fallo transitorio. Reintentamos solo errores de red y respuestas 5xx.
@@ -31,7 +26,9 @@ ESPERAS_REINTENTO = (10, 30)
 
 def _respuesta_incompleta(path: str, data: object) -> str | None:
     """Detecta respuestas HTTP 200 que no representan una actualización completa."""
-    if not path.startswith("/admin/import/gva") or not isinstance(data, dict):
+    # Compatibilidad con el importador GVA antiguo mientras siga disponible como
+    # respaldo técnico. El cron recurrente ya no lo utiliza.
+    if not path.startswith("/admin/import/gva?") or not isinstance(data, dict):
         return None
 
     if data.get("estado_importacion") == "INCOMPLETA":
@@ -105,22 +102,27 @@ def main() -> int:
         print("Falta EMPLOYMENT_IMPORT_SECRET", file=sys.stderr)
         return 2
 
-    hoy = date.today().isoformat()
+    hoy = date.today()
+    desde_gva = hoy - timedelta(days=VENTANA_GVA_DIAS - 1)
+    hoy_iso = hoy.isoformat()
+    desde_gva_iso = desde_gva.isoformat()
     tareas = [
-        # Descubrimiento reciente + seguimiento de todos los GVA conocidos.
-        f"/admin/import/gva?max_paginas={GVA_PAGINAS_DIARIAS}",
+        # GVA: descubrimiento incremental con tres días de solape. La ventana
+        # solo protege frente a retrasos/fallos; no define qué procesos siguen
+        # perteneciendo al catálogo.
+        f"/admin/import/gva-estatal?desde={desde_gva_iso}&hasta={hoy_iso}&aplicar=true",
 
         # Diputación: una semana de solape permite recuperar varios días de
         # incidencias sin repetir cada día un histórico costoso de 30 días.
         f"/admin/import/bop-valencia?historico=true&dias={VENTANA_BOP_DIAS}",
 
         # BOE local es rápido y conserva un solape mayor para descubrimiento.
-        f"/admin/gestion/import/boe-local?hasta={hoy}&dias={VENTANA_BOE_DIAS}&aplicar=true",
+        f"/admin/gestion/import/boe-local?hasta={hoy_iso}&dias={VENTANA_BOE_DIAS}&aplicar=true",
 
         # BOP municipal es la fuente más costosa; siete días de solape son
         # suficientes para una ejecución diaria y no afectan al ciclo de vida
         # de los procesos ya persistidos.
-        f"/admin/gestion/import/bop-municipios?hasta={hoy}&dias={VENTANA_BOP_DIAS}&aplicar=true",
+        f"/admin/gestion/import/bop-municipios?hasta={hoy_iso}&dias={VENTANA_BOP_DIAS}&aplicar=true",
 
         "/admin/seguimiento/preparar-notificaciones",
     ]

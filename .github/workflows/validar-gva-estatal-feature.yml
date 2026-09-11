@@ -1,0 +1,43 @@
+name: Validar integración estatal GVA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/gva-fuente-estatal
+      - feature/empleo-correcciones-auditoria
+    paths:
+      - ".github/workflows/validar-gva-estatal-feature.yml"
+      - "backend/app/gva_estatal_source.py"
+      - "backend/app/gva_estatal_import.py"
+      - "backend/app/gva_estatal_persist.py"
+      - "backend/app/gva_estatal_service.py"
+      - "backend/scripts/validar_gva_estatal_import.py"
+      - "backend/scripts/validar_gva_estatal_persist.py"
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Compilar módulos GVA estatales
+        run: python -m py_compile app/gva_estatal_source.py app/gva_estatal_import.py app/gva_estatal_persist.py app/gva_estatal_service.py
+
+      - name: Validar integración sin escritura en BD
+        run: PYTHONPATH=. python scripts/validar_gva_estatal_import.py
+
+      - name: Validar persistencia idempotente en solo revisión
+        run: PYTHONPATH=. python scripts/validar_gva_estatal_persist.py

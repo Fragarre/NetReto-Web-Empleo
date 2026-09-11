@@ -1,6 +1,7 @@
 from typing import Any
 import hmac
 import os
+from datetime import date
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_cleanup import limpiar_anuncios_no_empleo, normalizar_bop_prueba
 from .gva_enhanced import importar_gva_robusto, limpiar_gva_navegacion
 from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
+from .gva_estatal_service import importar_gva_estatal
 from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
 from .ayuntamiento_alicante import diagnosticar_ayuntamiento_alicante, importar_ayuntamiento_alicante
 from .empleo_admin import (
@@ -176,6 +178,21 @@ def importar_gva_endpoint(x_import_secret: str | None = Header(default=None), ma
             resultado["correccion_turnos"] = {"omitida": True, "motivo": "fuente_gva_incompleta"}
         return resultado
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Error en importación GVA: {exc}") from exc
+
+@app.post("/admin/import/gva-estatal")
+def importar_gva_estatal_endpoint(
+    desde: date = Query(...),
+    hasta: date = Query(...),
+    aplicar: bool = Query(default=False),
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return importar_gva_estatal(desde=desde, hasta=hasta, aplicar=aplicar)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación GVA estatal: {exc}") from exc
 
 @app.post("/admin/cleanup/gva-stale")
 def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:

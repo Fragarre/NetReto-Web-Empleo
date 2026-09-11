@@ -4,7 +4,9 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches:
+      - main
+      - feature/empleo-correcciones-auditoria
 
 jobs:
   validar:
@@ -20,3 +22,6 @@ jobs:
 
       - name: Compilar backend
         run: python -m compileall -q backend/app backend/auth.py backend/access.py
+
+      - name: Validar correcciones de empleo
+        run: python backend/scripts/validar_empleo_correcciones.py
