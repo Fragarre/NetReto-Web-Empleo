@@ -26,7 +26,10 @@ def _signatura_dogv(url: str | None) -> str | None:
     return f"{m.group(1)}_{m.group(2)}" if m else None
 
 
-def _descubrir_detalles_para_resolver(client: httpx.Client, max_paginas: int = 10) -> list[tuple[int, str]]:
+def _descubrir_detalles_para_resolver(
+    client: httpx.Client,
+    max_paginas: int = 10,
+) -> tuple[list[tuple[int, str]], list[dict[str, Any]]]:
     """Descubre fichas GVA sin limitarse a plazos de solicitud abiertos.
 
     Es una búsqueda auxiliar exclusiva para resolver el id_emp de una
@@ -35,16 +38,28 @@ def _descubrir_detalles_para_resolver(client: httpx.Client, max_paginas: int = 1
     gva_clean.descubrir_detalles() con plazos=A.
     """
     encontrados: dict[int, str] = {}
+    diagnostico_red: list[dict[str, Any]] = []
+
     for pagina in range(1, max_paginas + 1):
-        respuesta = client.get(
-            gva_clean.GVA_SEARCH_URL,
-            params={
+        try:
+            respuesta = client.get(
+                gva_clean.GVA_SEARCH_URL,
+                params={
+                    "pagina": pagina,
+                    "tipoOrganismo": "1",
+                    "tamanyoPagina": "30",
+                },
+            )
+            respuesta.raise_for_status()
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            diagnostico_red.append({
+                "fase": "listado",
                 "pagina": pagina,
-                "tipoOrganismo": "1",
-                "tamanyoPagina": "30",
-            },
-        )
-        respuesta.raise_for_status()
+                "url": str(getattr(getattr(exc, "request", None), "url", gva_clean.GVA_SEARCH_URL)),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            break
+
         soup = BeautifulSoup(respuesta.text, "html.parser")
         encontrados_pagina = 0
         for enlace in soup.select('a[href*="detall-ocupacio-publica"]'):
@@ -62,7 +77,7 @@ def _descubrir_detalles_para_resolver(client: httpx.Client, max_paginas: int = 1
         if encontrados_pagina == 0:
             break
 
-    return sorted(encontrados.items())
+    return sorted(encontrados.items()), diagnostico_red
 
 
 def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) -> dict[str, Any]:
@@ -92,31 +107,27 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
             "sin_coincidencia": 0,
             "ambiguas": 0,
             "errores_red": 0,
+            "diagnostico_red": [],
         }
 
     candidatas_por_signatura: dict[str, list[tuple[int, str]]] = {
         signatura: [] for signatura in pendientes
     }
-    errores_red = 0
 
-    try:
-        detalles = _descubrir_detalles_para_resolver(client, max_paginas=10)
-    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError):
-        return {
-            "pendientes": sum(len(v) for v in pendientes.values()),
-            "resueltas": 0,
-            "sin_coincidencia": 0,
-            "ambiguas": 0,
-            "errores_red": 1,
-        }
+    detalles, diagnostico_red = _descubrir_detalles_para_resolver(client, max_paginas=10)
 
     for id_emp, url in detalles:
         try:
             respuesta = client.get(url)
             respuesta.raise_for_status()
             html = respuesta.text
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError):
-            errores_red += 1
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            diagnostico_red.append({
+                "fase": "detalle",
+                "id_emp": int(id_emp),
+                "url": str(url),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
             continue
 
         for signatura in pendientes:
@@ -128,6 +139,7 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
             if signatura in html:
                 candidatas_por_signatura[signatura].append((int(id_emp), str(url)))
 
+    errores_red = len(diagnostico_red)
     resueltas = 0
     ambiguas = 0
     sin_coincidencia = 0
@@ -158,6 +170,7 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
         "sin_coincidencia": sin_coincidencia,
         "ambiguas": ambiguas,
         "errores_red": errores_red,
+        "diagnostico_red": diagnostico_red,
     }
 
 
