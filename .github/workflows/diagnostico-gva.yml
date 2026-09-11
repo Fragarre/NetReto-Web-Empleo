@@ -1,0 +1,40 @@
+name: Diagnóstico conectividad GVA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/diagnostico-gva.yml"
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolver DNS de sede.gva.es
+        run: |
+          python - <<'PY'
+          import socket
+          for item in socket.getaddrinfo('sede.gva.es', 443, type=socket.SOCK_STREAM):
+              print(item)
+          PY
+
+      - name: Probar buscador GVA por IPv4
+        continue-on-error: true
+        run: |
+          curl -4 -v --connect-timeout 10 --max-time 20 -o /dev/null \
+            -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
+            'https://sede.gva.es/es/cercador-ocupacio-publica?pagina=1&tipoOrganismo=1&plazos=A&tamanyoPagina=30'
+
+      - name: Probar ficha GVA por IPv4
+        continue-on-error: true
+        run: |
+          curl -4 -v --connect-timeout 10 --max-time 20 -o /dev/null \
+            -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
+            'https://sede.gva.es/detall-ocupacio-publica?id_emp=110206'
+
+      - name: Probar ficha GVA por IPv6
+        continue-on-error: true
+        run: |
+          curl -6 -v --connect-timeout 10 --max-time 20 -o /dev/null \
+            -A 'NetReto-Empleo/0.1 (https://netexamenes.com)' \
+            'https://sede.gva.es/detall-ocupacio-publica?id_emp=110206'
