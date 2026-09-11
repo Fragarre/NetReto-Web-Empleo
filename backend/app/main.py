@@ -205,6 +205,63 @@ def debug_gva_plazos(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en diagnóstico de plazos GVA: {exc}") from exc
 
+@app.get("/admin/debug/gva-conectividad")
+def debug_gva_conectividad(
+    x_import_secret: str | None = Header(default=None),
+    id_emp: int = Query(default=110595, ge=1),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    import socket
+    import httpx
+
+    host = "sede.gva.es"
+    resultado: dict[str, Any] = {
+        "modo": "SOLO_DIAGNOSTICO",
+        "host": host,
+        "id_emp": id_emp,
+        "dns": {"ok": False, "direcciones": []},
+        "pruebas_http": [],
+    }
+
+    try:
+        info = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        direcciones = sorted({item[4][0] for item in info})
+        resultado["dns"] = {"ok": True, "direcciones": direcciones}
+    except Exception as exc:
+        resultado["dns"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    objetivos = [
+        ("portada", "https://sede.gva.es/es/"),
+        ("ficha", f"https://sede.gva.es/es/detall-ocupacio-publica?id_emp={id_emp}&id_info=info_basica"),
+        ("buscador", "https://sede.gva.es/es/cercador-ocupacio-publica?pagina=1&tipoOrganismo=1&plazos=A&tamanyoPagina=30"),
+    ]
+    headers = {
+        "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
+        "Accept-Language": "es-ES,es;q=0.9",
+    }
+    timeout = httpx.Timeout(20.0, connect=10.0)
+    with httpx.Client(timeout=timeout, headers=headers, follow_redirects=True) as client:
+        for nombre, url in objetivos:
+            try:
+                respuesta = client.get(url)
+                resultado["pruebas_http"].append({
+                    "nombre": nombre,
+                    "ok": True,
+                    "status_code": respuesta.status_code,
+                    "url_final": str(respuesta.url),
+                    "bytes": len(respuesta.content),
+                })
+            except Exception as exc:
+                request_url = str(getattr(getattr(exc, "request", None), "url", url))
+                resultado["pruebas_http"].append({
+                    "nombre": nombre,
+                    "ok": False,
+                    "url": request_url,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+
+    return resultado
+
 @app.post("/admin/cleanup/gva-stale")
 def cleanup_gva_stale(x_import_secret: str | None = Header(default=None)) -> dict[str, Any]:
     _validar_import_secret(x_import_secret)
