@@ -9,8 +9,9 @@ from psycopg.types.json import Jsonb
 from .database import get_connection
 from .gva_estatal_import import LEGACY_ALIASES
 
-FUENTE_GVA_ID = 1
+FUENTE_GVA_DESCUBRIMIENTO_ID = 1
 FUENTE_GVA_URL_ESTATAL = "https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm"
+DOGV_HOST = "dogv.gva.es"
 
 
 def _referencia_publicacion(referencia_estatal: int) -> str:
@@ -130,15 +131,48 @@ def planificar_persistencia(
     return {"modo": "SOLO_REVISION", "resumen": resumen, "acciones": acciones}
 
 
-def _validar_fuente(cursor) -> None:
-    cursor.execute("SELECT id, organismo_id, activa FROM fuentes WHERE id=%s", (FUENTE_GVA_ID,))
+def _validar_fuente_descubrimiento(cursor) -> None:
+    cursor.execute(
+        "SELECT id, organismo_id, activa FROM fuentes WHERE id=%s",
+        (FUENTE_GVA_DESCUBRIMIENTO_ID,),
+    )
     fuente = cursor.fetchone()
     if fuente is None:
-        raise RuntimeError("No existe la fuente GVA esperada (id=1)")
+        raise RuntimeError("No existe la fuente GVA de descubrimiento esperada (id=1)")
     if fuente.get("organismo_id") != 1:
-        raise RuntimeError("La fuente GVA id=1 no pertenece al organismo GVA")
+        raise RuntimeError("La fuente GVA de descubrimiento id=1 no pertenece al organismo GVA")
     if not fuente.get("activa"):
-        raise RuntimeError("La fuente GVA id=1 está inactiva")
+        raise RuntimeError("La fuente GVA de descubrimiento id=1 está inactiva")
+
+
+def _resolver_fuente_dogv(cursor) -> int:
+    """Localiza de forma inequívoca la fuente oficial DOGV; nunca reutiliza sede.gva.es."""
+    cursor.execute(
+        """
+        SELECT id, nombre, tipo, url
+        FROM fuentes
+        WHERE activa=TRUE
+          AND (
+                UPPER(COALESCE(tipo,''))='DOGV'
+                OR LOWER(COALESCE(url,'')) LIKE %s
+                OR LOWER(COALESCE(nombre,'')) LIKE '%%diari oficial de la generalitat valenciana%%'
+              )
+        ORDER BY id
+        """,
+        (f"%{DOGV_HOST}%",),
+    )
+    candidatas = list(cursor.fetchall())
+    if len(candidatas) != 1:
+        raise RuntimeError(
+            "Persistencia GVA bloqueada: debe existir exactamente una fuente DOGV activa "
+            f"y se encontraron {len(candidatas)}"
+        )
+    fuente = candidatas[0]
+    url = str(fuente.get("url") or "").lower()
+    tipo = str(fuente.get("tipo") or "").upper()
+    if tipo != "DOGV" and DOGV_HOST not in url:
+        raise RuntimeError("Persistencia GVA bloqueada: la fuente localizada no identifica inequívocamente al DOGV")
+    return int(fuente["id"])
 
 
 def _cargar_existentes(cursor, identificadores: list[str]) -> dict[str, dict[str, Any]]:
@@ -151,13 +185,18 @@ def _cargar_existentes(cursor, identificadores: list[str]) -> dict[str, dict[str
     return {fila["identificador_estable"]: fila for fila in cursor.fetchall()}
 
 
-def _cargar_publicaciones_estatales(cursor, referencias: list[int]) -> set[int]:
+def _cargar_publicaciones_estatales(
+    cursor,
+    referencias: list[int],
+    *,
+    fuente_dogv_id: int,
+) -> set[int]:
     if not referencias:
         return set()
     refs = [_referencia_publicacion(r) for r in referencias]
     cursor.execute(
         "SELECT referencia FROM publicaciones WHERE fuente_id=%s AND referencia = ANY(%s)",
-        (FUENTE_GVA_ID, refs),
+        (fuente_dogv_id, refs),
     )
     salida: set[int] = set()
     for fila in cursor.fetchall():
@@ -205,7 +244,7 @@ def _insertar_nuevo(cursor, registro: dict[str, Any]) -> int:
             registro.get("fecha_apertura"),
             registro.get("fecha_cierre"),
             fecha_publicacion,
-            FUENTE_GVA_ID,
+            FUENTE_GVA_DESCUBRIMIENTO_ID,
             Jsonb(datos_json),
         ),
     )
@@ -243,7 +282,13 @@ def _enlazar_metadatos(cursor, accion: dict[str, Any]) -> None:
         raise RuntimeError(f"No se pudo enlazar de forma inequívoca {accion['identificador_estable']}")
 
 
-def _insertar_publicacion(cursor, *, proceso_id: int, registro: dict[str, Any]) -> bool:
+def _insertar_publicacion(
+    cursor,
+    *,
+    proceso_id: int,
+    registro: dict[str, Any],
+    fuente_dogv_id: int,
+) -> bool:
     referencia_estatal = int(registro["referencia_estatal"])
     datos = registro.get("datos_json") or {}
     url = datos.get("url_publicacion_oficial")
@@ -262,7 +307,7 @@ def _insertar_publicacion(cursor, *, proceso_id: int, registro: dict[str, Any]) 
         """,
         (
             proceso_id,
-            FUENTE_GVA_ID,
+            fuente_dogv_id,
             referencia,
             registro.get("denominacion"),
             fecha,
@@ -296,12 +341,18 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
     identificadores = [r["identificador_estable"] for r in registros]
     referencias = [int(r["referencia_estatal"]) for r in registros]
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        _validar_fuente(cursor)
+        _validar_fuente_descubrimiento(cursor)
+        fuente_dogv_id = _resolver_fuente_dogv(cursor)
         existentes = _cargar_existentes(cursor, identificadores)
-        publicaciones = _cargar_publicaciones_estatales(cursor, referencias)
+        publicaciones = _cargar_publicaciones_estatales(
+            cursor,
+            referencias,
+            fuente_dogv_id=fuente_dogv_id,
+        )
         plan = planificar_persistencia(registros, existentes, publicaciones)
 
         if not aplicar:
+            plan["fuente_dogv_id"] = fuente_dogv_id
             return plan
 
         if plan["resumen"]["bloquear"]:
@@ -329,11 +380,17 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
                 raise RuntimeError(f"Acción inesperada: {accion['accion']}")
 
             if accion.get("crear_publicacion"):
-                if _insertar_publicacion(cursor, proceso_id=proceso_id, registro=accion["registro"]):
+                if _insertar_publicacion(
+                    cursor,
+                    proceso_id=proceso_id,
+                    registro=accion["registro"],
+                    fuente_dogv_id=fuente_dogv_id,
+                ):
                     publicaciones_creadas += 1
 
         return {
             "modo": "APLICADO",
+            "fuente_dogv_id": fuente_dogv_id,
             "resumen_plan": plan["resumen"],
             "insertados": insertados,
             "enlazados": enlazados,
