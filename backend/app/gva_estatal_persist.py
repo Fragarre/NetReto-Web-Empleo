@@ -9,7 +9,6 @@ from psycopg.types.json import Jsonb
 from .database import get_connection
 from .gva_estatal_import import LEGACY_ALIASES
 
-FUENTE_GVA_DESCUBRIMIENTO_ID = 1
 FUENTE_GVA_URL_ESTATAL = "https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm"
 DOGV_HOST = "dogv.gva.es"
 
@@ -131,20 +130,6 @@ def planificar_persistencia(
     return {"modo": "SOLO_REVISION", "resumen": resumen, "acciones": acciones}
 
 
-def _validar_fuente_descubrimiento(cursor) -> None:
-    cursor.execute(
-        "SELECT id, organismo_id, activa FROM fuentes WHERE id=%s",
-        (FUENTE_GVA_DESCUBRIMIENTO_ID,),
-    )
-    fuente = cursor.fetchone()
-    if fuente is None:
-        raise RuntimeError("No existe la fuente GVA de descubrimiento esperada (id=1)")
-    if fuente.get("organismo_id") != 1:
-        raise RuntimeError("La fuente GVA de descubrimiento id=1 no pertenece al organismo GVA")
-    if not fuente.get("activa"):
-        raise RuntimeError("La fuente GVA de descubrimiento id=1 está inactiva")
-
-
 def _resolver_fuente_dogv(cursor) -> int:
     """Localiza de forma inequívoca la fuente oficial DOGV; nunca reutiliza sede.gva.es."""
     cursor.execute(
@@ -207,7 +192,7 @@ def _cargar_publicaciones_estatales(
     return salida
 
 
-def _insertar_nuevo(cursor, registro: dict[str, Any]) -> int:
+def _insertar_nuevo(cursor, registro: dict[str, Any], *, fuente_dogv_id: int) -> int:
     datos_json = dict(registro.get("datos_json") or {})
     datos_json["fuente_principal_estatal"] = FUENTE_GVA_URL_ESTATAL
     datos_json["fuente_estatal"] = _metadatos_estatales(registro)
@@ -244,7 +229,7 @@ def _insertar_nuevo(cursor, registro: dict[str, Any]) -> int:
             registro.get("fecha_apertura"),
             registro.get("fecha_cierre"),
             fecha_publicacion,
-            FUENTE_GVA_DESCUBRIMIENTO_ID,
+            fuente_dogv_id,
             Jsonb(datos_json),
         ),
     )
@@ -341,7 +326,6 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
     identificadores = [r["identificador_estable"] for r in registros]
     referencias = [int(r["referencia_estatal"]) for r in registros]
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        _validar_fuente_descubrimiento(cursor)
         fuente_dogv_id = _resolver_fuente_dogv(cursor)
         existentes = _cargar_existentes(cursor, identificadores)
         publicaciones = _cargar_publicaciones_estatales(
@@ -368,7 +352,11 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
                 continue
 
             if accion["accion"] == "INSERTAR":
-                proceso_id = _insertar_nuevo(cursor, accion["registro"])
+                proceso_id = _insertar_nuevo(
+                    cursor,
+                    accion["registro"],
+                    fuente_dogv_id=fuente_dogv_id,
+                )
                 ids_nuevos[accion["identificador_estable"]] = proceso_id
                 insertados += 1
             elif accion["accion"] == "ENLAZAR_METADATOS":
