@@ -29,4 +29,4 @@ jobs:
         run: pip install httpx beautifulsoup4
 
       - name: Validar ocho oportunidades oficiales conocidas
-        run: python scripts/validar_gva_estatal_source.py
+        run: PYTHONPATH=. python scripts/validar_gva_estatal_source.py
