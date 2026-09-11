@@ -28,6 +28,12 @@ def _metadatos_estatales(registro: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _datos_ficha_gva(registro: dict[str, Any]) -> dict[str, Any]:
+    datos = registro.get("datos_json") or {}
+    claves = ("id_emp", "codigo_gva", "codigo_sia", "url_detalle", "ficha_gva_resuelta_por")
+    return {k: datos.get(k) for k in claves if datos.get(k) is not None}
+
+
 def _publicacion_oficial_valida(registro: dict[str, Any]) -> bool:
     datos = registro.get("datos_json") or {}
     url = str(datos.get("url_publicacion_oficial") or "")
@@ -75,12 +81,14 @@ def planificar_persistencia(
             continue
 
         metadatos = _metadatos_estatales(registro)
+        ficha_gva = _datos_ficha_gva(registro)
         crear_publicacion = referencia not in publicaciones_existentes
 
         if existente is not None:
             datos_existentes = existente.get("datos_json") or {}
             actualizar_metadatos = datos_existentes.get("fuente_estatal") != metadatos
-            if not actualizar_metadatos and not crear_publicacion:
+            actualizar_ficha_gva = any(datos_existentes.get(k) != v for k, v in ficha_gva.items())
+            if not actualizar_metadatos and not actualizar_ficha_gva and not crear_publicacion:
                 acciones.append({
                     "accion": "SIN_CAMBIOS",
                     "identificador_estable": identificador,
@@ -94,7 +102,9 @@ def planificar_persistencia(
                 "proceso_id": existente.get("id"),
                 "preservar_campos_funcionales": True,
                 "actualizar_metadatos": actualizar_metadatos,
+                "actualizar_ficha_gva": actualizar_ficha_gva,
                 "metadatos_estatales": metadatos,
+                "ficha_gva": ficha_gva,
                 "crear_publicacion": crear_publicacion,
                 "registro": registro,
             })
@@ -120,6 +130,10 @@ def planificar_persistencia(
         "insertar": sum(a["accion"] == "INSERTAR" for a in acciones),
         "enlazar_metadatos": sum(
             a["accion"] == "ENLAZAR_METADATOS" and bool(a.get("actualizar_metadatos"))
+            for a in acciones
+        ),
+        "enlazar_ficha_gva": sum(
+            a["accion"] == "ENLAZAR_METADATOS" and bool(a.get("actualizar_ficha_gva"))
             for a in acciones
         ),
         "publicaciones": sum(bool(a.get("crear_publicacion")) for a in acciones),
@@ -246,6 +260,8 @@ def _insertar_nuevo(cursor, registro: dict[str, Any], *, fuente_dogv_id: int) ->
 
 
 def _enlazar_metadatos(cursor, accion: dict[str, Any]) -> None:
+    parche = {"fuente_estatal": accion["metadatos_estatales"]}
+    parche.update(accion.get("ficha_gva") or {})
     cursor.execute(
         """
         UPDATE procesos
@@ -257,8 +273,8 @@ def _enlazar_metadatos(cursor, accion: dict[str, Any]) -> None:
         WHERE id=%s AND identificador_estable=%s
         """,
         (
-            Jsonb({"fuente_estatal": accion["metadatos_estatales"]}),
-            Jsonb({"fuente_estatal": accion["metadatos_estatales"]}),
+            Jsonb(parche),
+            Jsonb(parche),
             accion["proceso_id"],
             accion["identificador_estable"],
         ),
@@ -361,7 +377,7 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
                 insertados += 1
             elif accion["accion"] == "ENLAZAR_METADATOS":
                 proceso_id = int(accion["proceso_id"])
-                if accion.get("actualizar_metadatos"):
+                if accion.get("actualizar_metadatos") or accion.get("actualizar_ficha_gva"):
                     _enlazar_metadatos(cursor, accion)
                     enlazados += 1
             else:
