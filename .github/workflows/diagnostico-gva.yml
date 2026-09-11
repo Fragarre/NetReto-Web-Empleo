@@ -1,4 +1,4 @@
-name: Diagnóstico paginación GVA estatal
+name: Auditoría GVA estatal
 
 on:
   workflow_dispatch:
@@ -7,25 +7,58 @@ on:
       - auditoria-gva-estatal
     paths:
       - ".github/workflows/diagnostico-gva.yml"
+      - "backend/scripts/auditar_gva_estatal.py"
 
 jobs:
-  diagnostico:
+  auditoria:
     runs-on: ubuntu-latest
     steps:
-      - name: Validar páginas oficiales
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install httpx beautifulsoup4
+
+      - name: Auditar GVA 2026 en solo lectura
+        continue-on-error: true
         run: |
-          set -e
-          base='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=09%2F07%2F2026&fechaPublicacionHasta=09%2F07%2F2026&orders=id&sort=desc&tam=100'
-          for p in 1 2 3; do
-            url="$base&desde=$p"
-            curl -4 -L --fail --retry 4 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 60 -A 'Mozilla/5.0' -o "/tmp/r$p.html" "$url"
-            P="$p" python - <<'PY'
-          import os,re
-          h=open('/tmp/r'+os.environ['P']+'.html',encoding='utf-8',errors='replace').read()
-          refs=[]
-          for x in re.finditer(r'idConvocatoria=(\d+)',h):
-              if x.group(1) not in refs: refs.append(x.group(1))
-          m=re.search(r'name=["\']numPaginaActual["\'][^>]*value=["\'](\d+)',h,re.I)
-          print('SOLICITADA',os.environ['P'],'ACTUAL',m.group(1) if m else '?','N',len(refs),'PRIMEROS',refs[:3],'ULTIMOS',refs[-3:])
+          python backend/scripts/auditar_gva_estatal.py \
+            --desde 2026-01-01 \
+            --hasta 2026-09-11 \
+            --salida auditoria_gva_estatal.json
+
+      - name: Mostrar resumen
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('auditoria_gva_estatal.json')
+          if not p.exists():
+              raise SystemExit('No se generó el informe de auditoría')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          print('AUDITORIA_COMPLETA=',d['auditoria_completa'])
+          print('DIAS=',d['dias_consultados'])
+          print('PAGINAS=',d['paginas_consultadas'])
+          print('TARJETAS_AUTONOMICO_CV=',d['tarjetas_autonomico_cv'])
+          print('INCLUIDOS=',len(d['incluidos_automaticos']))
+          print('REVISION=',len(d['revision_manual']))
+          print('PROMOCION_INTERNA=',len(d['promocion_interna_excluida']))
+          print('ERRORES=',len(d['errores']))
+          for x in d['incluidos_automaticos']:
+              print('INCLUIDO',x['referencia'],x['titulo'],'|',x.get('codigos_administrativos'),'|',x.get('organo'))
+          for e in d['errores'][:100]:
+              print('ERROR',e)
           PY
-          done
+
+      - name: Guardar informe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auditoria-gva-estatal-2026-paginada
+          path: auditoria_gva_estatal.json
+          if-no-files-found: error
