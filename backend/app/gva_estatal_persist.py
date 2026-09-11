@@ -17,6 +17,24 @@ def _referencia_publicacion(referencia_estatal: int) -> str:
     return f"GVAESTATAL:{referencia_estatal}:CONVOCATORIA"
 
 
+def _metadatos_estatales(registro: dict[str, Any]) -> dict[str, Any]:
+    datos = registro.get("datos_json") or {}
+    return {
+        "fuente_descubrimiento": "administracion.gob.es",
+        "referencia_estatal": registro.get("referencia_estatal"),
+        "url_estatal": datos.get("url_estatal"),
+        "via_estatal": datos.get("via_estatal"),
+        "codigos_administrativos": datos.get("codigos_administrativos"),
+    }
+
+
+def _publicacion_oficial_valida(registro: dict[str, Any]) -> bool:
+    datos = registro.get("datos_json") or {}
+    url = str(datos.get("url_publicacion_oficial") or "")
+    fecha = datos.get("fecha_publicacion_oficial")
+    return bool(fecha and url.startswith("https://dogv.gva.es/"))
+
+
 def planificar_persistencia(
     registros: list[dict[str, Any]],
     existentes_por_identificador: dict[str, dict[str, Any]],
@@ -24,14 +42,9 @@ def planificar_persistencia(
 ) -> dict[str, Any]:
     """Genera un plan de persistencia sin escribir en BD.
 
-    Reglas de seguridad:
-    - Los cuatro procesos GVA legacy jamás se sobrescriben con campos funcionales.
-      Solo se propone añadir metadatos de la referencia estatal a datos_json.
-    - Los nuevos registros inequívocos se proponen como INSERT.
-    - Los registros no publicables se dejan en REVISION y nunca se insertan aquí.
-    - Si ya existe un identificador nuevo, solo se propone actualización de metadatos.
-    - Se asegura una publicación oficial inicial por referencia estatal, de forma
-      idempotente, sin duplicarla en ejecuciones posteriores.
+    El portal estatal se usa para descubrimiento. La publicación primaria que se
+    persiste debe ser el PDF oficial del DOGV. Los registros existentes conservan
+    todos sus campos funcionales.
     """
     publicaciones_existentes = publicaciones_existentes or set()
     legacy_ids = set(LEGACY_ALIASES.values())
@@ -52,21 +65,35 @@ def planificar_persistencia(
             })
             continue
 
-        metadatos = {
-            "fuente_descubrimiento": "administracion.gob.es",
-            "referencia_estatal": referencia,
-            "url_estatal": (registro.get("datos_json") or {}).get("url_estatal"),
-            "via_estatal": (registro.get("datos_json") or {}).get("via_estatal"),
-            "codigos_administrativos": (registro.get("datos_json") or {}).get("codigos_administrativos"),
-        }
+        if not _publicacion_oficial_valida(registro):
+            acciones.append({
+                "accion": "BLOQUEAR",
+                "identificador_estable": identificador,
+                "referencia_estatal": referencia,
+                "motivo": "publicacion_oficial_dogv_ausente",
+            })
+            continue
+
+        metadatos = _metadatos_estatales(registro)
         crear_publicacion = referencia not in publicaciones_existentes
 
         if existente is not None:
+            datos_existentes = existente.get("datos_json") or {}
+            actualizar_metadatos = datos_existentes.get("fuente_estatal") != metadatos
+            if not actualizar_metadatos and not crear_publicacion:
+                acciones.append({
+                    "accion": "SIN_CAMBIOS",
+                    "identificador_estable": identificador,
+                    "proceso_id": existente.get("id"),
+                    "referencia_estatal": referencia,
+                })
+                continue
             acciones.append({
                 "accion": "ENLAZAR_METADATOS",
                 "identificador_estable": identificador,
                 "proceso_id": existente.get("id"),
                 "preservar_campos_funcionales": True,
+                "actualizar_metadatos": actualizar_metadatos,
                 "metadatos_estatales": metadatos,
                 "crear_publicacion": crear_publicacion,
                 "registro": registro,
@@ -86,13 +113,17 @@ def planificar_persistencia(
             "accion": "INSERTAR",
             "identificador_estable": identificador,
             "registro": registro,
-            "crear_publicacion": crear_publicacion,
+            "crear_publicacion": True,
         })
 
     resumen = {
         "insertar": sum(a["accion"] == "INSERTAR" for a in acciones),
-        "enlazar_metadatos": sum(a["accion"] == "ENLAZAR_METADATOS" for a in acciones),
+        "enlazar_metadatos": sum(
+            a["accion"] == "ENLAZAR_METADATOS" and bool(a.get("actualizar_metadatos"))
+            for a in acciones
+        ),
         "publicaciones": sum(bool(a.get("crear_publicacion")) for a in acciones),
+        "sin_cambios": sum(a["accion"] == "SIN_CAMBIOS" for a in acciones),
         "revision": sum(a["accion"] == "REVISION" for a in acciones),
         "bloquear": sum(a["accion"] == "BLOQUEAR" for a in acciones),
     }
@@ -140,21 +171,22 @@ def _cargar_publicaciones_estatales(cursor, referencias: list[int]) -> set[int]:
 def _insertar_nuevo(cursor, registro: dict[str, Any]) -> int:
     datos_json = dict(registro.get("datos_json") or {})
     datos_json["fuente_principal_estatal"] = FUENTE_GVA_URL_ESTATAL
-    fecha_publicacion = datos_json.get("fecha_publicacion_busqueda")
+    datos_json["fuente_estatal"] = _metadatos_estatales(registro)
+    fecha_publicacion = datos_json.get("fecha_publicacion_oficial")
     cursor.execute(
         """
         INSERT INTO procesos (
             organismo_id, codigo_externo, identificador_estable, denominacion,
             cuerpo_escala, grupo, tipo_proceso, turno, estado,
-            anio_convocatoria, fecha_apertura, fecha_cierre, ultima_publicacion_at,
-            fuente_principal_id, datos_json, es_oportunidad, origen_dato,
-            revision_estado, ambito_administrativo, created_at, updated_at
+            anio_convocatoria, fecha_convocatoria, fecha_apertura, fecha_cierre,
+            ultima_publicacion_at, fuente_principal_id, datos_json, es_oportunidad,
+            origen_dato, revision_estado, ambito_administrativo, created_at, updated_at
         ) VALUES (
             1, %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s::date::timestamptz,
-            %s, %s, TRUE, 'AUTOMATICO',
-            'PUBLICADA', 'SI', NOW(), NOW()
+            %s, %s, %s, %s,
+            %s::date::timestamptz, %s, %s, TRUE,
+            'AUTOMATICO', 'PUBLICADA', 'SI', NOW(), NOW()
         )
         ON CONFLICT (identificador_estable) DO NOTHING
         RETURNING id
@@ -168,7 +200,8 @@ def _insertar_nuevo(cursor, registro: dict[str, Any]) -> int:
             registro.get("tipo_proceso"),
             registro.get("turno"),
             registro.get("estado") or "EN_CURSO",
-            int((registro.get("fecha_apertura") or "0000")[:4]) if registro.get("fecha_apertura") else None,
+            int(fecha_publicacion[:4]) if fecha_publicacion else None,
+            fecha_publicacion,
             registro.get("fecha_apertura"),
             registro.get("fecha_cierre"),
             fecha_publicacion,
@@ -213,10 +246,10 @@ def _enlazar_metadatos(cursor, accion: dict[str, Any]) -> None:
 def _insertar_publicacion(cursor, *, proceso_id: int, registro: dict[str, Any]) -> bool:
     referencia_estatal = int(registro["referencia_estatal"])
     datos = registro.get("datos_json") or {}
-    url = datos.get("url_estatal")
-    fecha = datos.get("fecha_publicacion_busqueda")
-    if not url:
-        raise RuntimeError(f"Falta URL estatal para la referencia {referencia_estatal}")
+    url = datos.get("url_publicacion_oficial")
+    fecha = datos.get("fecha_publicacion_oficial")
+    if not url or not fecha or not str(url).startswith("https://dogv.gva.es/"):
+        raise RuntimeError(f"Falta publicación oficial DOGV para la referencia {referencia_estatal}")
 
     referencia = _referencia_publicacion(referencia_estatal)
     cursor.execute(
@@ -235,14 +268,15 @@ def _insertar_publicacion(cursor, *, proceso_id: int, registro: dict[str, Any]) 
             fecha,
             url,
             Jsonb({
-                "origen": "ADMINISTRACION_GOB_ES",
+                "origen": "DOGV",
+                "descubierta_via": "administracion.gob.es",
                 "referencia_estatal": referencia_estatal,
                 "via_estatal": datos.get("via_estatal"),
             }),
         ),
     )
     creada = cursor.rowcount == 1
-    if creada and fecha:
+    if creada:
         cursor.execute(
             """
             UPDATE procesos
@@ -259,11 +293,6 @@ def _insertar_publicacion(cursor, *, proceso_id: int, registro: dict[str, Any]) 
 
 
 def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = False) -> dict[str, Any]:
-    """Planifica y, solo con aplicar=True, persiste de forma transaccional e idempotente.
-
-    Nunca modifica campos funcionales de registros ya existentes. Si el plan contiene
-    un BLOQUEO, no se aplica ninguna escritura.
-    """
     identificadores = [r["identificador_estable"] for r in registros]
     referencias = [int(r["referencia_estatal"]) for r in registros]
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -276,7 +305,7 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
             return plan
 
         if plan["resumen"]["bloquear"]:
-            raise RuntimeError("Persistencia GVA bloqueada: el plan contiene anomalías legacy")
+            raise RuntimeError("Persistencia GVA bloqueada: el plan contiene anomalías")
 
         insertados = 0
         enlazados = 0
@@ -284,7 +313,7 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
         ids_nuevos: dict[str, int] = {}
 
         for accion in plan["acciones"]:
-            if accion["accion"] == "REVISION":
+            if accion["accion"] in {"REVISION", "SIN_CAMBIOS"}:
                 continue
 
             if accion["accion"] == "INSERTAR":
@@ -293,8 +322,9 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
                 insertados += 1
             elif accion["accion"] == "ENLAZAR_METADATOS":
                 proceso_id = int(accion["proceso_id"])
-                _enlazar_metadatos(cursor, accion)
-                enlazados += 1
+                if accion.get("actualizar_metadatos"):
+                    _enlazar_metadatos(cursor, accion)
+                    enlazados += 1
             else:
                 raise RuntimeError(f"Acción inesperada: {accion['accion']}")
 
