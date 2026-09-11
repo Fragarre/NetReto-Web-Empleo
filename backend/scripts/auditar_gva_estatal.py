@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import time
 import unicodedata
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -16,6 +17,7 @@ BASE = "https://administracion.gob.es"
 RESULTADOS = f"{BASE}/pagFront/ofertasempleopublico/resultadosEmpleo.htm"
 DETALLE = f"{BASE}/pagFront/ofertasempleopublico/detalleEmpleo.htm"
 UA = "NetReto-Empleo-Auditoria/1.0 (https://netexamenes.com)"
+TAM_PAGINA = 100
 
 CODIGOS_ADMIN = ("A1-01", "A2-01", "A2-05", "C1-01", "C1-07", "C2-01")
 PATRONES_ADMIN = (
@@ -79,6 +81,26 @@ def parse_total(soup: BeautifulSoup) -> int | None:
     texto = limpio(soup.get_text(" ", strip=True))
     m = re.search(r"Total resultados:\s*([\d.]+)", texto, re.I)
     return int(m.group(1).replace(".", "")) if m else None
+
+
+def parse_pagina_actual(soup: BeautifulSoup) -> int | None:
+    inp = soup.find("input", {"id": "numPaginaActual"})
+    if not inp:
+        return None
+    try:
+        return int(inp.get("value"))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_paginas_totales(soup: BeautifulSoup) -> int | None:
+    inp = soup.find("input", {"id": "numPaginasTotales"})
+    if not inp:
+        return None
+    try:
+        return int(inp.get("value"))
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_tarjetas(html: str) -> list[dict]:
@@ -158,6 +180,22 @@ def parse_detalle(html: str) -> dict:
     return {"texto": texto, "acceso": acceso, "seguimientos": sorted(set(seguimientos))}
 
 
+def params_dia(f: str, pagina: int = 1) -> dict:
+    p = {
+        "tipoBusqueda": "CONVOCATORIAS",
+        "buscar": "true",
+        "tipoFechas": "intervaloFechas",
+        "fechaPublicacionDesde": f,
+        "fechaPublicacionHasta": f,
+        "orders": "id",
+        "sort": "desc",
+        "tam": str(TAM_PAGINA),
+    }
+    if pagina > 1:
+        p["desde"] = str(pagina)
+    return p
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Auditoría SOLO LECTURA de convocatorias GVA en administracion.gob.es")
     ap.add_argument("--desde", default="2026-01-01")
@@ -172,31 +210,72 @@ def main() -> int:
     tarjetas_cv: dict[int, dict] = {}
     dias_consultados = 0
     dias_con_resultados = 0
+    paginas_consultadas = 0
 
     with httpx.Client(timeout=httpx.Timeout(45.0, connect=15.0), headers=headers, follow_redirects=True) as client:
         for dia in fecha_iter(inicio, fin):
             dias_consultados += 1
             f = dia.strftime("%d/%m/%Y")
-            params = {
-                "tipoBusqueda": "CONVOCATORIAS", "buscar": "true", "tipoFechas": "intervaloFechas",
-                "fechaPublicacionDesde": f, "fechaPublicacionHasta": f,
-                "orders": "id", "sort": "desc", "tam": "100",
-            }
             try:
-                r = get_con_reintentos(client, RESULTADOS, params=params)
+                r = get_con_reintentos(client, RESULTADOS, params=params_dia(f, 1))
+                paginas_consultadas += 1
             except Exception as exc:
-                errores.append({"tipo": "ERROR_DIA", "fecha": dia.isoformat(), "error": f"{type(exc).__name__}: {exc}"})
+                errores.append({"tipo": "ERROR_DIA", "fecha": dia.isoformat(), "pagina": 1, "error": f"{type(exc).__name__}: {exc}"})
                 continue
+
             soup = BeautifulSoup(r.text, "html.parser")
             total = parse_total(soup)
-            tarjetas = parse_tarjetas(r.text)
+            pagina_actual = parse_pagina_actual(soup)
+            paginas_html = parse_paginas_totales(soup)
+            tarjetas_dia: dict[int, dict] = {t["referencia"]: t for t in parse_tarjetas(r.text)}
+
             if total:
                 dias_con_resultados += 1
             if total is None:
                 errores.append({"tipo": "TOTAL_NO_LOCALIZADO", "fecha": dia.isoformat()})
-            elif total > len(tarjetas):
-                errores.append({"tipo": "PAGINACION_INCOMPLETA", "fecha": dia.isoformat(), "total": total, "tarjetas": len(tarjetas)})
-            for t in tarjetas:
+                total = len(tarjetas_dia)
+
+            paginas_calculadas = max(1, math.ceil(total / TAM_PAGINA)) if total else 1
+            if pagina_actual not in (None, 1):
+                errores.append({"tipo": "PAGINA_INICIAL_INESPERADA", "fecha": dia.isoformat(), "pagina_actual": pagina_actual})
+            if paginas_html is not None and paginas_html != paginas_calculadas:
+                errores.append({
+                    "tipo": "TOTAL_PAGINAS_INCONSISTENTE",
+                    "fecha": dia.isoformat(),
+                    "total": total,
+                    "paginas_html": paginas_html,
+                    "paginas_calculadas": paginas_calculadas,
+                })
+
+            for pagina in range(2, paginas_calculadas + 1):
+                try:
+                    rp = get_con_reintentos(client, RESULTADOS, params=params_dia(f, pagina))
+                    paginas_consultadas += 1
+                except Exception as exc:
+                    errores.append({"tipo": "ERROR_DIA", "fecha": dia.isoformat(), "pagina": pagina, "error": f"{type(exc).__name__}: {exc}"})
+                    continue
+                sp = BeautifulSoup(rp.text, "html.parser")
+                actual = parse_pagina_actual(sp)
+                if actual != pagina:
+                    errores.append({
+                        "tipo": "PAGINA_NO_RESPETADA",
+                        "fecha": dia.isoformat(),
+                        "pagina_solicitada": pagina,
+                        "pagina_recibida": actual,
+                    })
+                for t in parse_tarjetas(rp.text):
+                    tarjetas_dia[t["referencia"]] = t
+
+            if len(tarjetas_dia) != total:
+                errores.append({
+                    "tipo": "PAGINACION_INCOMPLETA",
+                    "fecha": dia.isoformat(),
+                    "total": total,
+                    "tarjetas_unicas": len(tarjetas_dia),
+                    "paginas_esperadas": paginas_calculadas,
+                })
+
+            for t in tarjetas_dia.values():
                 if "AUTONÓMICO - COMUNITAT VALENCIANA" in (t.get("ubicacion") or "").upper():
                     t["fecha_publicacion_busqueda"] = dia.isoformat()
                     tarjetas_cv[t["referencia"]] = t
@@ -220,7 +299,7 @@ def main() -> int:
                 "acceso": det["acceso"],
                 "seguimientos_detectados": det["seguimientos"],
             }
-            if organismo_gva != "NO" and (ambito_admin != "NO"):
+            if organismo_gva != "NO" and ambito_admin != "NO":
                 candidatos.append(item)
             if num % 25 == 0:
                 print(f"Detalles revisados: {num}/{len(tarjetas_cv)}")
@@ -231,9 +310,11 @@ def main() -> int:
     informe = {
         "modo": "SOLO_LECTURA",
         "fuente": "administracion.gob.es",
-        "desde": inicio.isoformat(), "hasta": fin.isoformat(),
+        "desde": inicio.isoformat(),
+        "hasta": fin.isoformat(),
         "dias_consultados": dias_consultados,
         "dias_con_resultados": dias_con_resultados,
+        "paginas_consultadas": paginas_consultadas,
         "tarjetas_autonomico_cv": len(tarjetas_cv),
         "incluidos_automaticos": incluidos,
         "revision_manual": revision,
@@ -243,10 +324,16 @@ def main() -> int:
     }
     Path(args.salida).write_text(json.dumps(informe, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({
-        "modo": informe["modo"], "desde": informe["desde"], "hasta": informe["hasta"],
-        "dias_consultados": dias_consultados, "tarjetas_autonomico_cv": len(tarjetas_cv),
-        "incluidos_automaticos": len(incluidos), "revision_manual": len(revision),
-        "promocion_interna_excluida": len(promocion), "errores": len(errores),
+        "modo": informe["modo"],
+        "desde": informe["desde"],
+        "hasta": informe["hasta"],
+        "dias_consultados": dias_consultados,
+        "paginas_consultadas": paginas_consultadas,
+        "tarjetas_autonomico_cv": len(tarjetas_cv),
+        "incluidos_automaticos": len(incluidos),
+        "revision_manual": len(revision),
+        "promocion_interna_excluida": len(promocion),
+        "errores": len(errores),
         "auditoria_completa": informe["auditoria_completa"],
         "referencias_incluidas": [x["referencia"] for x in incluidos],
     }, ensure_ascii=False, indent=2))
