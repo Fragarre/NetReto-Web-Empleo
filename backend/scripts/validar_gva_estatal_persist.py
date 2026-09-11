@@ -45,28 +45,28 @@ def main() -> int:
         "GVA:110206": {"id": 29},
         "GVA:110235": {"id": 30},
     }
-    plan = planificar_persistencia(registros, existentes)
-    esperado = {"insertar": 3, "enlazar_metadatos": 4, "revision": 0, "bloquear": 0}
+    plan = planificar_persistencia(registros, existentes, set())
+    esperado = {"insertar": 3, "enlazar_metadatos": 4, "publicaciones": 7, "revision": 0, "bloquear": 0}
     if plan["resumen"] != esperado:
         raise AssertionError(f"Plan inesperado: {plan['resumen']} != {esperado}")
 
-    # Segunda pasada simulada: los tres nuevos ya existirían. Debe ser idempotente,
-    # sin proponer nuevos INSERT.
+    # Segunda pasada simulada: procesos y publicaciones oficiales ya existen.
     existentes_2 = dict(existentes)
     existentes_2.update({
         "GVAESTATAL:221774": {"id": 1001},
         "GVAESTATAL:219292": {"id": 1002},
         "GVAESTATAL:219983": {"id": 1003},
     })
-    plan2 = planificar_persistencia(registros, existentes_2)
-    esperado2 = {"insertar": 0, "enlazar_metadatos": 7, "revision": 0, "bloquear": 0}
+    referencias = {referencia for referencia, _, _ in CASOS}
+    plan2 = planificar_persistencia(registros, existentes_2, referencias)
+    esperado2 = {"insertar": 0, "enlazar_metadatos": 7, "publicaciones": 0, "revision": 0, "bloquear": 0}
     if plan2["resumen"] != esperado2:
         raise AssertionError(f"Plan idempotente inesperado: {plan2['resumen']} != {esperado2}")
 
     # Salvaguarda: si falta un legacy real, no debe recrearse automáticamente.
     existentes_sin_legacy = dict(existentes)
     existentes_sin_legacy.pop("GVA:110135")
-    plan3 = planificar_persistencia(registros, existentes_sin_legacy)
+    plan3 = planificar_persistencia(registros, existentes_sin_legacy, set())
     if plan3["resumen"]["bloquear"] != 1:
         raise AssertionError(f"No se bloqueó legacy ausente: {plan3['resumen']}")
 
