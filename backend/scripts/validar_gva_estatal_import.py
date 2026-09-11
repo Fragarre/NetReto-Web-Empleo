@@ -55,11 +55,17 @@ def main() -> int:
                 )
             if registro["preservar_campos_existentes"] is not legacy:
                 raise AssertionError(f"{referencia}: política legacy incorrecta")
+            datos = registro.get("datos_json") or {}
+            if not str(datos.get("url_publicacion_oficial") or "").startswith("https://dogv.gva.es/"):
+                raise AssertionError(f"{referencia}: falta URL oficial DOGV: {datos}")
+            if not datos.get("fecha_publicacion_oficial"):
+                raise AssertionError(f"{referencia}: falta fecha oficial DOGV")
             print(
                 referencia,
                 "|", registro["identificador_estable"],
                 "|", registro["tipo_proceso"],
                 "|", registro["cuerpo_escala"],
+                "| DOGV=", datos["fecha_publicacion_oficial"],
                 "| preservar=", registro["preservar_campos_existentes"],
             )
 
