@@ -1,4 +1,4 @@
-name: Diagnóstico conectividad GVA
+name: Auditoría GVA estatal
 
 on:
   workflow_dispatch:
@@ -7,34 +7,59 @@ on:
       - auditoria-gva-estatal
     paths:
       - ".github/workflows/diagnostico-gva.yml"
+      - "backend/scripts/auditar_gva_estatal.py"
 
 jobs:
-  diagnostico:
+  auditoria:
     runs-on: ubuntu-latest
     steps:
-      - name: Instalar parser
-        run: pip install beautifulsoup4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Inspeccionar tarjeta de resultado conocida
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install httpx beautifulsoup4
+
+      - name: Auditar GVA 2026 en solo lectura
+        continue-on-error: true
         run: |
-          set -e
-          url='https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm?tipoBusqueda=CONVOCATORIAS&buscar=true&tipoFechas=intervaloFechas&fechaPublicacionDesde=08%2F07%2F2026&fechaPublicacionHasta=08%2F07%2F2026&orders=id&sort=desc&tam=100'
-          curl -4 -L --fail --retry 4 --retry-all-errors --retry-delay 3 \
-            --connect-timeout 15 --max-time 60 -A 'Mozilla/5.0' \
-            -o /tmp/resultados.html "$url"
+          python backend/scripts/auditar_gva_estatal.py \
+            --desde 2026-01-01 \
+            --hasta 2026-09-11 \
+            --salida auditoria_gva_estatal.json
+          echo $? > auditoria_exit_code.txt
+
+      - name: Mostrar resumen
+        if: always()
+        run: |
           python - <<'PY'
-          from bs4 import BeautifulSoup
-          import re
-          html=open('/tmp/resultados.html',encoding='utf-8',errors='replace').read()
-          soup=BeautifulSoup(html,'html.parser')
-          a=soup.find('a',href=re.compile(r'(idRegistro|idConvocatoria)=221774'))
-          print('ENLACE',a.get('href') if a else None)
-          n=a
-          for i in range(6):
-              if not n: break
-              n=n.parent
-              if not n: break
-              texto=' '.join(n.get_text(' ',strip=True).split())
-              print('NIVEL',i+1,'TAG',n.name,'CLASS',n.get('class'),'ID',n.get('id'),'LEN',len(texto))
-              print(texto[:1800])
+          import json, pathlib
+          p=pathlib.Path('auditoria_gva_estatal.json')
+          if not p.exists():
+              raise SystemExit('No se generó el informe de auditoría')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          print('AUDITORIA_COMPLETA=',d['auditoria_completa'])
+          print('TARJETAS_AUTONOMICO_CV=',d['tarjetas_autonomico_cv'])
+          print('INCLUIDOS=',len(d['incluidos_automaticos']))
+          print('REVISION=',len(d['revision_manual']))
+          print('PROMOCION_INTERNA=',len(d['promocion_interna_excluida']))
+          print('ERRORES=',len(d['errores']))
+          for x in d['incluidos_automaticos']:
+              print('INCLUIDO',x['referencia'],x['titulo'],'|',x.get('codigos_administrativos'),'|',x.get('organo'))
+          for x in d['revision_manual']:
+              print('REVISION',x['referencia'],x['titulo'],'| org=',x['organismo_gva'],'admin=',x['ambito_administrativo'],'acceso=',x['acceso'])
+          for e in d['errores'][:50]:
+              print('ERROR',e)
           PY
+
+      - name: Guardar informe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auditoria-gva-estatal-2026
+          path: auditoria_gva_estatal.json
+          if-no-files-found: error
