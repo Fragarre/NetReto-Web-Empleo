@@ -1,0 +1,37 @@
+name: Diagnostico GVA seguimientos
+
+on:
+  push:
+    branches: [feature/gva-seguimiento-recurrente]
+    paths:
+      - ".github/workflows/diagnostico-gva-seguimientos.yml"
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install httpx beautifulsoup4
+      - name: Inspeccionar enlaces DOGV y contexto
+        run: |
+          python - <<'PY'
+          import httpx, re
+          from bs4 import BeautifulSoup
+          for ref in (221774, 219862):
+              url=f"https://administracion.gob.es/pagFront/ofertasempleopublico/detalleEmpleo.htm?idConvocatoria={ref}&idioma=es"
+              r=httpx.get(url,timeout=60,follow_redirects=True,headers={"User-Agent":"NetReto-Empleo/1.0 (https://netexamenes.com)"})
+              r.raise_for_status()
+              soup=BeautifulSoup(r.text,"html.parser")
+              print(f"=== REF {ref} ===")
+              for a in soup.find_all("a",href=True):
+                  href=str(a.get("href") or "")
+                  if "dogv.gva.es" not in href.lower():
+                      continue
+                  parent=a.parent
+                  contexto=" ".join((parent.get_text(" ",strip=True) if parent else a.get_text(" ",strip=True)).split())
+                  print("HREF",href)
+                  print("TEXT", " ".join(a.get_text(" ",strip=True).split()))
+                  print("CTX",contexto[:1000])
+          PY
