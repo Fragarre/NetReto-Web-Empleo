@@ -15,6 +15,7 @@ from .gva_estatal_seguimiento import (
 from .gva_estatal_source import nuevo_cliente
 
 DOGV_API = "https://dogv.gva.es/dogv-portal"
+GVBORSES_URL = "https://gvborses.gva.es/gvborses/organismos"
 
 
 def _codigo_insercion(signatura: str) -> str:
@@ -181,10 +182,31 @@ def _descubrir_dogv_en_fechas(
     return [encontrados[k] for k in sorted(encontrados)]
 
 
+def _diagnosticar_gvborses(client: httpx.Client) -> dict[str, Any]:
+    """Comprueba únicamente conectividad Render -> plataforma oficial GVBorses."""
+    try:
+        respuesta = client.get(GVBORSES_URL)
+        respuesta.raise_for_status()
+        return {
+            "ok": True,
+            "status_code": respuesta.status_code,
+            "url_final": str(respuesta.url),
+            "content_type": respuesta.headers.get("content-type"),
+            "bytes": len(respuesta.content),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "url": GVBORSES_URL,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
     """Audita, sin escribir, el seguimiento GVA actual contra el DOGV oficial."""
     procesos = _cargar_procesos_activos()
     salida: list[dict[str, Any]] = []
+    diagnostico_gvborses: dict[str, Any] = {}
 
     with nuevo_cliente() as estatal, httpx.Client(
         timeout=httpx.Timeout(30.0, connect=10.0),
@@ -270,11 +292,17 @@ def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
                 "descubrimiento_dogv_directo": descubrimiento_directo,
             })
 
+        diagnostico_gvborses = _diagnosticar_gvborses(dogv)
+
     return {
         "modo": "SOLO_DIAGNOSTICO",
         "escrituras_bd": False,
         "fuente_asociacion": "administracion.gob.es",
         "fuente_validacion": DOGV_API,
+        "fuente_bolsas": {
+            "url": GVBORSES_URL,
+            "conectividad": diagnostico_gvborses,
+        },
         "procesos": salida,
         "resumen": {
             "procesos": len(salida),
