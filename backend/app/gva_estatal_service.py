@@ -96,7 +96,6 @@ def _descubrir_detalles_para_resolver(
             encontrados[id_emp] = urljoin(gva_clean.GVA_BASE_URL, href)
             encontrados_pagina += 1
 
-        # Si la página no contiene ninguna ficha, no quedan más resultados.
         if encontrados_pagina == 0:
             break
 
@@ -104,11 +103,11 @@ def _descubrir_detalles_para_resolver(
 
 
 def diagnosticar_filtros_plazo_gva(id_emp_objetivo: int | None = None) -> dict[str, Any]:
-    """Prueba de solo lectura para identificar los valores reales de `plazos`.
+    """Diagnóstico aislado de acceso a los dos buscadores oficiales GVA.
 
-    No persiste nada ni modifica el resolver. Se prueban de forma aislada los
-    valores candidatos A, C y P, además de capturar controles `plazo` presentes
-    en el HTML devuelto por la variante A, que ya usa el importador ordinario.
+    No persiste nada ni modifica el resolver. Mantiene las pruebas A/C/P sobre
+    sede.gva.es y añade una prueba del buscador clásico de www.gva.es, que usa
+    el mismo identificador id_emp.
     """
     variantes = ("A", "C", "P")
     resultado: dict[str, Any] = {
@@ -116,6 +115,7 @@ def diagnosticar_filtros_plazo_gva(id_emp_objetivo: int | None = None) -> dict[s
         "objetivo_id_emp": id_emp_objetivo,
         "controles_plazo": [],
         "variantes": [],
+        "www_gva": {},
     }
 
     with nuevo_cliente() as client:
@@ -177,6 +177,39 @@ def diagnosticar_filtros_plazo_gva(id_emp_objetivo: int | None = None) -> dict[s
                     "error": f"{type(exc).__name__}: {exc}",
                 })
 
+        url_clasico = "https://www.gva.es/es/inicio/atencion_ciudadano/buscadores/busc_empleo_publico"
+        try:
+            respuesta = _get_gva_con_reintentos(
+                client,
+                url_clasico,
+                params={"buscar": "buscar", "paginaActual": "1"},
+                intentos=1,
+            )
+            soup = BeautifulSoup(respuesta.text, "html.parser")
+            ids: list[int] = []
+            for enlace in soup.select('a[href*="detalle_oposiciones"]'):
+                href = str(enlace.get("href") or "")
+                m = re.search(r"id_emp=(\d+)", href)
+                if m:
+                    ids.append(int(m.group(1)))
+            ids_unicos = sorted(set(ids))
+            resultado["www_gva"] = {
+                "ok": True,
+                "status_code": respuesta.status_code,
+                "url": str(respuesta.url),
+                "fichas_en_pagina": len(ids_unicos),
+                "muestra_id_emp": ids_unicos[:10],
+                "contiene_objetivo": (
+                    id_emp_objetivo in ids_unicos if id_emp_objetivo is not None else None
+                ),
+            }
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            resultado["www_gva"] = {
+                "ok": False,
+                "url": str(getattr(getattr(exc, "request", None), "url", url_clasico)),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
     return resultado
 
 
@@ -230,9 +263,6 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
             continue
 
         for signatura in pendientes:
-            # Con dos coincidencias la signatura ya es ambigua; no necesita
-            # seguir comparándose con más fichas, aunque sí continuamos el
-            # recorrido para poder resolver las demás signaturas pendientes.
             if len(candidatas_por_signatura[signatura]) >= 2:
                 continue
             if signatura in html:
@@ -245,9 +275,6 @@ def _enriquecer_fichas_oficiales_gva(registros: list[dict[str, Any]], client) ->
 
     for signatura, registros_signatura in pendientes.items():
         candidatas = candidatas_por_signatura.get(signatura) or []
-        # Una coincidencia solo es concluyente si se pudieron revisar todas las
-        # fichas candidatas sin errores de red. Con páginas omitidas no podemos
-        # demostrar que no exista una segunda coincidencia.
         if len(candidatas) == 1 and errores_red == 0:
             id_emp, url = candidatas[0]
             for registro in registros_signatura:
