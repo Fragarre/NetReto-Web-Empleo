@@ -218,6 +218,7 @@ def _buscar_proceso_seguimiento(cursor, hallazgo: dict[str, Any]) -> tuple[dict[
         JOIN organismos o ON o.id=p.organismo_id
         WHERE o.tipo='AYUNTAMIENTO'
           AND p.ambito_administrativo='SI'
+          AND p.estado='EN_CURSO'
           AND p.fecha_convocatoria IS NOT NULL
           AND p.fecha_convocatoria <= %s
         ORDER BY p.fecha_convocatoria DESC,p.id DESC
