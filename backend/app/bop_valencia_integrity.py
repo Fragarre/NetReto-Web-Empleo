@@ -101,8 +101,9 @@ _TERMINALES = (
 )
 
 
-def _es_publicacion_terminal(titulo: str | None, contenido: str | None) -> bool:
-    n = _bop._sin(f"{titulo or ''} {contenido or ''}")
+def _es_publicacion_terminal(titulo: str | None, contenido: str | None = None) -> bool:
+    """Exige evidencia terminal en el título oficial, no en el texto interno de las bases."""
+    n = _bop._sin(titulo or "")
     return any(_bop._sin(x) in n for x in _TERMINALES)
 
 
