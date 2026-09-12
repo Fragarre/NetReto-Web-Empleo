@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 import httpx
+from bs4 import BeautifulSoup
 
 from .gva_estatal_seguimiento import (
     _cargar_procesos_activos,
@@ -69,12 +70,6 @@ def _obtener_disposicion_dogv(
     signatura: str,
     fecha_publicacion: str | None,
 ) -> dict[str, Any]:
-    """Localiza una disposición por código de inserción exacto.
-
-    Primero usa la fecha asociada al enlace. Si el portal estatal ha fechado el
-    enlace de forma incorrecta, busca el mismo código exacto en una ventana de
-    cinco días a cada lado. No se usa similitud de títulos ni otra heurística.
-    """
     if not fecha_publicacion:
         return {"ok": False, "motivo": "fecha_publicacion_ausente"}
 
@@ -94,7 +89,9 @@ def _obtener_disposicion_dogv(
         if len(coincidencias) == 1:
             salida = _detalle_disposicion(client, coincidencias[0])
             salida["fecha_consultada"] = fecha_iso
-            salida["fecha_resuelta_por"] = "FECHA_EXACTA" if indice == 0 else "CODIGO_EXACTO_VENTANA_5_DIAS"
+            salida["fecha_resuelta_por"] = (
+                "FECHA_EXACTA" if indice == 0 else "CODIGO_EXACTO_VENTANA_5_DIAS"
+            )
             return salida
         if len(coincidencias) > 1:
             return {
@@ -135,12 +132,6 @@ def _descubrir_dogv_en_fechas(
     identidad: set[str],
     fechas_semilla: set[str],
 ) -> list[dict[str, Any]]:
-    """Busca seguimientos directamente en DOGV alrededor de fechas conocidas.
-
-    La prueba sirve para comprobar que DOGV puede descubrir publicaciones que el
-    portal estatal enlaza mal. Solo acepta coincidencias por identificadores
-    fuertes exactos; nunca por similitud textual.
-    """
     if not fechas_semilla:
         return []
 
@@ -159,8 +150,7 @@ def _descubrir_dogv_en_fechas(
         for resumen in diario.get("disposiciones") or []:
             titulo = str(resumen.get("titulo") or "")
             tokens_resumen = _tokens_identidad(titulo)
-            comunes_resumen = identidad & tokens_resumen
-            if not comunes_resumen:
+            if not (identidad & tokens_resumen):
                 continue
             detalle = _detalle_disposicion(client, resumen)
             tokens_detalle = set(detalle.get("tokens_dogv") or [])
@@ -183,16 +173,49 @@ def _descubrir_dogv_en_fechas(
 
 
 def _diagnosticar_gvborses(client: httpx.Client) -> dict[str, Any]:
-    """Comprueba únicamente conectividad Render -> plataforma oficial GVBorses."""
+    """Inspecciona solo la estructura pública inicial de GVBorses; no escribe nada."""
     try:
         respuesta = client.get(GVBORSES_URL)
         respuesta.raise_for_status()
+        texto = respuesta.text
+        soup = BeautifulSoup(texto, "html.parser")
+        enlaces = [
+            {"texto": a.get_text(" ", strip=True)[:120], "href": str(a.get("href") or "")}
+            for a in soup.find_all("a", href=True)
+        ]
+        frames = [
+            {"tag": x.name, "src": str(x.get("src") or "")}
+            for x in soup.find_all(["frame", "iframe"], src=True)
+        ]
+        scripts = [str(x.get("src") or "") for x in soup.find_all("script", src=True)]
+        formularios = [
+            {
+                "action": str(f.get("action") or ""),
+                "method": str(f.get("method") or "GET").upper(),
+            }
+            for f in soup.find_all("form")
+        ]
+        metas = [
+            {
+                "http_equiv": str(m.get("http-equiv") or ""),
+                "content": str(m.get("content") or ""),
+            }
+            for m in soup.find_all("meta")
+            if m.get("http-equiv") or m.get("content")
+        ]
         return {
             "ok": True,
             "status_code": respuesta.status_code,
             "url_final": str(respuesta.url),
             "content_type": respuesta.headers.get("content-type"),
             "bytes": len(respuesta.content),
+            "texto_visible": " ".join(soup.get_text(" ", strip=True).split())[:500],
+            "html_inicio": texto[:1200],
+            "enlaces": enlaces[:20],
+            "frames": frames[:20],
+            "scripts": scripts[:20],
+            "formularios": formularios[:20],
+            "metas": metas[:20],
         }
     except Exception as exc:
         return {
@@ -203,7 +226,6 @@ def _diagnosticar_gvborses(client: httpx.Client) -> dict[str, Any]:
 
 
 def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
-    """Audita, sin escribir, el seguimiento GVA actual contra el DOGV oficial."""
     procesos = _cargar_procesos_activos()
     salida: list[dict[str, Any]] = []
     diagnostico_gvborses: dict[str, Any] = {}
@@ -265,7 +287,6 @@ def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
                 if fecha_semilla:
                     fechas_semilla.add(str(fecha_semilla))
 
-            descubrimiento_directo: list[dict[str, Any]] = []
             try:
                 descubrimiento_directo = _descubrir_dogv_en_fechas(
                     dogv,
@@ -273,9 +294,7 @@ def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
                     fechas_semilla=fechas_semilla,
                 )
             except Exception as exc:
-                descubrimiento_directo = [{
-                    "error": f"{type(exc).__name__}: {exc}",
-                }]
+                descubrimiento_directo = [{"error": f"{type(exc).__name__}: {exc}"}]
 
             salida.append({
                 "proceso_id": proceso_id,
