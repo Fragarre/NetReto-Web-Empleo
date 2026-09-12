@@ -92,10 +92,12 @@ def _identificador_estable(titulo: str, texto: str) -> str:
 
 
 _TERMINALES = (
-    "finalizacion del proceso selectivo", "finalitzacio del proces selectiu",
-    "desistimiento del proceso selectivo", "desistiment del proces selectiu",
+    "finalizacion del proceso", "finalitzacio del proces",
+    "desistimiento", "desistiment",
     "nombramiento como funcionario", "nombramiento de funcionario",
+    "nombramiento mediante concurso",
     "nomenament com a funcionari", "nomenament de funcionari",
+    "nomenament mitjancant concurs",
     "toma de posesion", "presa de possessio",
     "adjudicacion de destinos", "adjudicacio de destinacions",
 )
