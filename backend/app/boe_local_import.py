@@ -295,15 +295,16 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                     """
                     INSERT INTO procesos (
                         organismo_id,codigo_externo,identificador_estable,denominacion,plazas,
-                        sistema_selectivo,turno,estado,fecha_convocatoria,fuente_principal_id,
+                        sistema_selectivo,turno,estado,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,
                         es_oportunidad,ambito_administrativo,datos_json,updated_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,'EN_CURSO',%s,9,TRUE,'SI',%s,NOW())
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,'EN_CURSO',%s,%s::date::timestamptz,9,TRUE,'SI',%s,NOW())
                     RETURNING id
                     """,
                     (
                         organismo["id"], codigo, estable, convocatoria.get("denominacion"),
                         convocatoria.get("plazas"), convocatoria.get("sistema_selectivo"),
-                        convocatoria.get("turno"), convocatoria.get("fecha_boe"), Jsonb(datos_proceso),
+                        convocatoria.get("turno"), convocatoria.get("fecha_boe"), convocatoria.get("fecha_boe"),
+                        Jsonb(datos_proceso),
                     ),
                 )
                 proceso_id = cursor.fetchone()["id"]
