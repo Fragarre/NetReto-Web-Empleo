@@ -23,14 +23,40 @@ _STOPWORDS = {
     "aprovacio", "aprobacion", "aprovar", "aprobar", "bases", "convocatoria", "proces",
     "proceso", "selectiu", "selectivo", "seleccion", "cobertura", "propietat", "propiedad",
     "placa", "places", "plaza", "plazas", "personal", "turno", "torn", "libre", "lliure",
-    "administracio", "administracion", "general", "escala", "subescala", "sistema",
-    "concurs", "concurso", "oposicio", "oposicion", "mitjancant", "mediante", "sobre",
+    "escala", "subescala", "sistema", "concurs", "concurso", "oposicio", "oposicion",
+    "mitjancant", "mediante", "sobre",
+}
+
+_ALIAS = {
+    "administratiu": "administrativo",
+    "administrativa": "administrativo",
+    "administrativo": "administrativo",
+    "administratius": "administrativo",
+    "administratives": "administrativo",
+    "administrativos": "administrativo",
+    "administrativas": "administrativo",
+    "administracio": "administracion",
+    "administracion": "administracion",
+    "servei": "servicio",
+    "serveis": "servicio",
+    "servicio": "servicio",
+    "servicios": "servicio",
+    "benestar": "bienestar",
+    "bienestar": "bienestar",
 }
 
 
 def _sin(texto: str | None) -> str:
     valor = unicodedata.normalize("NFD", (texto or "").lower())
     return "".join(c for c in valor if unicodedata.category(c) != "Mn")
+
+
+def _tokens_canonicos(texto: str | None, *, min_len: int = 1) -> list[str]:
+    return [
+        _ALIAS.get(p, p)
+        for p in re.findall(r"[a-z0-9]+", _sin(texto))
+        if len(p) >= min_len
+    ]
 
 
 def _entidad_objetivo(organismo: dict[str, Any]) -> str | None:
@@ -51,8 +77,8 @@ def _entidad_objetivo(organismo: dict[str, Any]) -> str | None:
 
 def _palabras(texto: str | None) -> set[str]:
     return {
-        p for p in re.findall(r"[a-z0-9]+", _sin(texto))
-        if len(p) >= 4 and p not in _STOPWORDS
+        p for p in _tokens_canonicos(texto, min_len=4)
+        if p not in _STOPWORDS
     }
 
 
@@ -65,14 +91,12 @@ def _puntuacion(denominacion: str | None, titulo: str | None) -> tuple[int, int]
 
 
 def _titulo_pertenece_entidad(titulo: str | None, entidad: str) -> bool:
-    nt = _sin(titulo)
-    ne = _sin(entidad).strip()
-    if not ne:
-        return False
-    if ne in nt:
-        return True
-    tokens = [p for p in re.findall(r"[a-z0-9]+", ne) if len(p) >= 3]
-    return bool(tokens) and all(p in nt for p in tokens)
+    tokens_entidad = {
+        p for p in _tokens_canonicos(entidad, min_len=3)
+        if p not in {"ayuntamiento", "ajuntament", "mancomunidad", "mancomunitat"}
+    }
+    tokens_titulo = set(_tokens_canonicos(titulo, min_len=3))
+    return bool(tokens_entidad) and tokens_entidad.issubset(tokens_titulo)
 
 
 def _candidatos_entidad(
@@ -139,15 +163,14 @@ def _diagnostico_candidatos(
     entidad = _entidad_objetivo(organismo)
     candidatos = _candidatos_entidad(anuncios, organismo=organismo)
     tokens_entidad = {
-        p for p in re.findall(r"[a-z0-9]+", _sin(entidad or ""))
-        if len(p) >= 4
+        p for p in _tokens_canonicos(entidad or "", min_len=4)
     }
     cercanos = []
     for anuncio in anuncios:
-        titulo = anuncio.get("titulo") or ""
-        nt = _sin(titulo)
-        if tokens_entidad and any(token in nt for token in tokens_entidad):
+        tokens_titulo = set(_tokens_canonicos(anuncio.get("titulo") or "", min_len=4))
+        if tokens_entidad and tokens_entidad & tokens_titulo:
             cercanos.append(anuncio)
+
     def resumir(a: dict[str, Any]) -> dict[str, Any]:
         return {
             "registro": a.get("registro"),
@@ -156,12 +179,29 @@ def _diagnostico_candidatos(
             "puntuacion": list(_puntuacion(denominacion, a.get("titulo"))),
             "titulo": (a.get("titulo") or "")[:500],
         }
+
     return {
         "entidad_objetivo": entidad,
         "total_anuncios_fecha": len(anuncios),
         "coincidencias_entidad": [resumir(a) for a in candidatos[:12]],
         "anuncios_cercanos": [resumir(a) for a in cercanos[:12]],
     }
+
+
+def _titulo_generico(texto: str, mr: re.Match[str]) -> str | None:
+    # Algunos índices del BOP sitúan el título antes del número de registro y otros después.
+    despues = texto[mr.end(): min(len(texto), mr.end() + 900)]
+    md = re.search(r"\b(?:Anunci|Anuncio)\b[^.]{20,800}\. ", despues + " ", re.I)
+    if md:
+        return " ".join(md.group(0).split()).strip()
+
+    inicio = max(texto.rfind("Anunci", 0, mr.start()), texto.rfind("Anuncio", 0, mr.start()))
+    if inicio < 0:
+        return None
+    titulo = " ".join(texto[inicio:mr.start()].split()).rstrip(".") + "."
+    if len(titulo) > 1000:
+        return None
+    return titulo
 
 
 def _extraer_anuncios_genericos(html: str) -> list[dict[str, Any]]:
@@ -178,11 +218,8 @@ def _extraer_anuncios_genericos(html: str) -> list[dict[str, Any]]:
         registro = mr.group(1)
         if registro in vistos:
             continue
-        inicio = max(texto.rfind("Anunci", 0, mr.start()), texto.rfind("Anuncio", 0, mr.start()))
-        if inicio < 0:
-            continue
-        titulo = " ".join(texto[inicio:mr.start()].split()).rstrip(".") + "."
-        if len(titulo) > 1000:
+        titulo = _titulo_generico(texto, mr)
+        if not titulo:
             continue
         vistos.add(registro)
         resultados.append({
