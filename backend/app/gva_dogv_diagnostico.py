@@ -5,7 +5,6 @@ import re
 from typing import Any
 
 import httpx
-from bs4 import BeautifulSoup
 
 from .gva_estatal_seguimiento import (
     _cargar_procesos_activos,
@@ -16,7 +15,6 @@ from .gva_estatal_seguimiento import (
 from .gva_estatal_source import nuevo_cliente
 
 DOGV_API = "https://dogv.gva.es/dogv-portal"
-GVBORSES_URL = "https://gvborses.gva.es/gvborses/organismos"
 
 
 def _codigo_insercion(signatura: str) -> str:
@@ -32,25 +30,17 @@ def _fecha_url_dogv(url: str | None) -> str | None:
 
 
 def _leer_diario(client: httpx.Client, fecha: str) -> dict[str, Any]:
-    respuesta = client.get(
-        f"{DOGV_API}/dogv",
-        params={"date": fecha, "lang": "es_es"},
-    )
+    respuesta = client.get(f"{DOGV_API}/dogv", params={"date": fecha, "lang": "es_es"})
     respuesta.raise_for_status()
     return respuesta.json()
 
 
 def _detalle_disposicion(client: httpx.Client, resumen: dict[str, Any]) -> dict[str, Any]:
     dogv_id = int(resumen["id"])
-    respuesta = client.get(
-        f"{DOGV_API}/disposicion/{dogv_id}",
-        params={"lang": "es_es"},
-    )
+    respuesta = client.get(f"{DOGV_API}/disposicion/{dogv_id}", params={"lang": "es_es"})
     respuesta.raise_for_status()
     detalle = respuesta.json()
-    texto_identidad = " ".join(
-        str(x or "") for x in (detalle.get("titulo"), detalle.get("texto"))
-    )
+    texto_identidad = " ".join(str(x or "") for x in (detalle.get("titulo"), detalle.get("texto")))
     return {
         "ok": True,
         "id_dogv": dogv_id,
@@ -64,77 +54,39 @@ def _detalle_disposicion(client: httpx.Client, resumen: dict[str, Any]) -> dict[
     }
 
 
-def _obtener_disposicion_dogv(
-    client: httpx.Client,
-    *,
-    signatura: str,
-    fecha_publicacion: str | None,
-) -> dict[str, Any]:
+def _obtener_disposicion_dogv(client: httpx.Client, *, signatura: str, fecha_publicacion: str | None) -> dict[str, Any]:
     if not fecha_publicacion:
         return {"ok": False, "motivo": "fecha_publicacion_ausente"}
-
     codigo = _codigo_insercion(signatura)
     base = date.fromisoformat(fecha_publicacion)
     fechas = [base]
     for distancia in range(1, 6):
         fechas.extend((base - timedelta(days=distancia), base + timedelta(days=distancia)))
-
     for indice, fecha in enumerate(fechas):
         fecha_iso = fecha.isoformat()
         diario = _leer_diario(client, fecha_iso)
-        coincidencias = [
-            item for item in (diario.get("disposiciones") or [])
-            if str(item.get("codigoInsercion") or "").strip() == codigo
-        ]
+        coincidencias = [x for x in (diario.get("disposiciones") or []) if str(x.get("codigoInsercion") or "").strip() == codigo]
         if len(coincidencias) == 1:
             salida = _detalle_disposicion(client, coincidencias[0])
             salida["fecha_consultada"] = fecha_iso
-            salida["fecha_resuelta_por"] = (
-                "FECHA_EXACTA" if indice == 0 else "CODIGO_EXACTO_VENTANA_5_DIAS"
-            )
+            salida["fecha_resuelta_por"] = "FECHA_EXACTA" if indice == 0 else "CODIGO_EXACTO_VENTANA_5_DIAS"
             return salida
         if len(coincidencias) > 1:
-            return {
-                "ok": False,
-                "motivo": "codigo_insercion_no_unico_en_fecha",
-                "codigo_insercion": codigo,
-                "fecha_publicacion": fecha_iso,
-                "coincidencias": len(coincidencias),
-            }
-
-    return {
-        "ok": False,
-        "motivo": "codigo_insercion_no_localizado_en_ventana",
-        "codigo_insercion": codigo,
-        "fecha_publicacion": fecha_publicacion,
-        "ventana_dias": 5,
-    }
+            return {"ok": False, "motivo": "codigo_insercion_no_unico_en_fecha", "codigo_insercion": codigo, "fecha_publicacion": fecha_iso}
+    return {"ok": False, "motivo": "codigo_insercion_no_localizado_en_ventana", "codigo_insercion": codigo, "fecha_publicacion": fecha_publicacion}
 
 
 def _coincide_identidad(identidad: set[str], tokens: set[str]) -> tuple[bool, list[str]]:
     comunes = sorted(identidad & tokens)
-    especificos = {
-        token for token in identidad
-        if token.startswith("CONVOCATORIA:")
-        or token.startswith("ORDEN:")
-        or token.startswith("BOLSA:")
-    }
-    codigos = {token for token in identidad if token.startswith("CODIGO:")}
-    comunes_especificos = especificos & tokens
-    comunes_codigo = codigos & tokens
-    ok = bool(comunes_especificos) and (not codigos or bool(comunes_codigo))
+    especificos = {x for x in identidad if x.startswith("CONVOCATORIA:") or x.startswith("ORDEN:") or x.startswith("BOLSA:")}
+    codigos = {x for x in identidad if x.startswith("CODIGO:")}
+    ok = bool(especificos & tokens) and (not codigos or bool(codigos & tokens))
     return ok, comunes
 
 
-def _descubrir_dogv_en_fechas(
-    client: httpx.Client,
-    *,
-    identidad: set[str],
-    fechas_semilla: set[str],
-) -> list[dict[str, Any]]:
+def _descubrir_dogv_en_fechas(client: httpx.Client, *, identidad: set[str], fechas_semilla: set[str]) -> list[dict[str, Any]]:
     if not fechas_semilla:
         return []
-
     fechas: set[date] = set()
     for valor in fechas_semilla:
         try:
@@ -143,99 +95,37 @@ def _descubrir_dogv_en_fechas(
             continue
         for desplazamiento in range(-5, 6):
             fechas.add(base + timedelta(days=desplazamiento))
-
     encontrados: dict[str, dict[str, Any]] = {}
     for fecha in sorted(fechas):
         diario = _leer_diario(client, fecha.isoformat())
         for resumen in diario.get("disposiciones") or []:
-            titulo = str(resumen.get("titulo") or "")
-            tokens_resumen = _tokens_identidad(titulo)
-            if not (identidad & tokens_resumen):
+            if not (identidad & _tokens_identidad(str(resumen.get("titulo") or ""))):
                 continue
             detalle = _detalle_disposicion(client, resumen)
-            tokens_detalle = set(detalle.get("tokens_dogv") or [])
-            ok, comunes = _coincide_identidad(identidad, tokens_detalle)
+            ok, comunes = _coincide_identidad(identidad, set(detalle.get("tokens_dogv") or []))
             if not ok:
                 continue
             codigo = str(detalle.get("codigo_insercion") or "").replace("/", "_")
-            if not codigo:
-                continue
-            encontrados[codigo] = {
-                "signatura": codigo,
-                "fecha_publicacion": detalle.get("fecha_publicacion"),
-                "titulo": detalle.get("titulo"),
-                "id_dogv": detalle.get("id_dogv"),
-                "cve": detalle.get("cve"),
-                "tokens_dogv": detalle.get("tokens_dogv") or [],
-                "coincidencias_identidad": comunes,
-            }
+            if codigo:
+                encontrados[codigo] = {
+                    "signatura": codigo,
+                    "fecha_publicacion": detalle.get("fecha_publicacion"),
+                    "titulo": detalle.get("titulo"),
+                    "id_dogv": detalle.get("id_dogv"),
+                    "cve": detalle.get("cve"),
+                    "tokens_dogv": detalle.get("tokens_dogv") or [],
+                    "coincidencias_identidad": comunes,
+                }
     return [encontrados[k] for k in sorted(encontrados)]
 
 
-def _diagnosticar_gvborses(client: httpx.Client) -> dict[str, Any]:
-    """Inspecciona solo la estructura pública inicial de GVBorses; no escribe nada."""
-    try:
-        respuesta = client.get(GVBORSES_URL)
-        respuesta.raise_for_status()
-        texto = respuesta.text
-        soup = BeautifulSoup(texto, "html.parser")
-        enlaces = [
-            {"texto": a.get_text(" ", strip=True)[:120], "href": str(a.get("href") or "")}
-            for a in soup.find_all("a", href=True)
-        ]
-        frames = [
-            {"tag": x.name, "src": str(x.get("src") or "")}
-            for x in soup.find_all(["frame", "iframe"], src=True)
-        ]
-        scripts = [str(x.get("src") or "") for x in soup.find_all("script", src=True)]
-        formularios = [
-            {
-                "action": str(f.get("action") or ""),
-                "method": str(f.get("method") or "GET").upper(),
-            }
-            for f in soup.find_all("form")
-        ]
-        metas = [
-            {
-                "http_equiv": str(m.get("http-equiv") or ""),
-                "content": str(m.get("content") or ""),
-            }
-            for m in soup.find_all("meta")
-            if m.get("http-equiv") or m.get("content")
-        ]
-        return {
-            "ok": True,
-            "status_code": respuesta.status_code,
-            "url_final": str(respuesta.url),
-            "content_type": respuesta.headers.get("content-type"),
-            "bytes": len(respuesta.content),
-            "texto_visible": " ".join(soup.get_text(" ", strip=True).split())[:500],
-            "html_inicio": texto[:1200],
-            "enlaces": enlaces[:20],
-            "frames": frames[:20],
-            "scripts": scripts[:20],
-            "formularios": formularios[:20],
-            "metas": metas[:20],
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "url": GVBORSES_URL,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-
-
 def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
+    """Construye el plan de migración al DOGV directo. Siempre es solo lectura."""
     procesos = _cargar_procesos_activos()
     salida: list[dict[str, Any]] = []
-    diagnostico_gvborses: dict[str, Any] = {}
-
     with nuevo_cliente() as estatal, httpx.Client(
         timeout=httpx.Timeout(30.0, connect=10.0),
-        headers={
-            "User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)",
-            "Accept-Language": "es-ES,es;q=0.9",
-        },
+        headers={"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"},
         follow_redirects=True,
     ) as dogv:
         for proceso in procesos:
@@ -243,99 +133,56 @@ def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
             referencia = int(proceso["referencia_estatal"])
             html = _obtener_html(estatal, referencia)
             extraido = extraer_seguimientos_validos(html)
-            identidad = set(extraido.get("identidad") or [])
-            identidad |= _tokens_identidad(str(proceso.get("denominacion") or ""))
-            actuales = {x["signatura"] for x in extraido.get("validos") or []}
+            identidad = set(extraido.get("identidad") or []) | _tokens_identidad(str(proceso.get("denominacion") or ""))
             datos = proceso.get("datos_json") or {}
             estado = datos.get("seguimiento_gva") if isinstance(datos.get("seguimiento_gva"), dict) else {}
             vistos = {str(x) for x in (estado.get("vistos") or [])}
-
-            validados: list[dict[str, Any]] = []
             fechas_semilla: set[str] = set()
-            for item in extraido.get("validos") or []:
+            validaciones: list[dict[str, Any]] = []
+            for item in (extraido.get("validos") or []) + (extraido.get("rechazados") or []):
                 fecha_url = _fecha_url_dogv(item.get("url"))
-                fecha_validacion = fecha_url or item.get("fecha_publicacion")
-                if fecha_validacion:
-                    fechas_semilla.add(str(fecha_validacion))
-                auditoria: dict[str, Any] = {
-                    "signatura": item["signatura"],
-                    "fecha_publicacion_extraida": item.get("fecha_publicacion"),
-                    "fecha_publicacion_url": fecha_url,
-                    "fecha_validacion_dogv": fecha_validacion,
-                    "titulo_estatal": item.get("titulo"),
-                    "tokens_estatal": item.get("tokens") or [],
-                    "coincidencias_identidad_estatal": item.get("coincidencias_identidad") or [],
+                fecha = fecha_url or item.get("fecha_publicacion")
+                if fecha:
+                    fechas_semilla.add(str(fecha))
+                if item in (extraido.get("validos") or []):
+                    oficial = _obtener_disposicion_dogv(dogv, signatura=item["signatura"], fecha_publicacion=fecha)
+                    ok, comunes = _coincide_identidad(identidad, set(oficial.get("tokens_dogv") or []))
+                    validaciones.append({"signatura": item["signatura"], "dogv": oficial, "coincidencias_identidad_dogv": comunes, "validacion_dogv": bool(oficial.get("ok") and ok)})
+            directos = _descubrir_dogv_en_fechas(dogv, identidad=identidad, fechas_semilla=fechas_semilla)
+            directos_ids = {x["signatura"] for x in directos}
+            es_bolsa = any(x.startswith("BOLSA:") for x in identidad)
+            if es_bolsa:
+                plan = {"accion": "BOLSA_SEGUIMIENTO_SIMPLIFICADO", "vistos_propuestos": sorted(vistos), "novedades_historicas": []}
+            else:
+                plan = {
+                    "accion": "MIGRAR_BASELINE_DOGV",
+                    "vistos_anteriores": sorted(vistos),
+                    "vistos_propuestos": sorted(directos_ids),
+                    "eliminar_del_estado": sorted(vistos - directos_ids),
+                    "incorporar_al_baseline": sorted(directos_ids - vistos),
+                    "novedades_historicas": [],
                 }
-                try:
-                    oficial = _obtener_disposicion_dogv(
-                        dogv,
-                        signatura=item["signatura"],
-                        fecha_publicacion=fecha_validacion,
-                    )
-                except Exception as exc:
-                    oficial = {"ok": False, "motivo": f"{type(exc).__name__}: {exc}"}
-                auditoria["dogv"] = oficial
-                tokens_dogv = set(oficial.get("tokens_dogv") or [])
-                ok_identidad, comunes = _coincide_identidad(identidad, tokens_dogv)
-                auditoria["coincidencias_identidad_dogv"] = comunes
-                auditoria["validacion_dogv"] = bool(oficial.get("ok") and ok_identidad)
-                validados.append(auditoria)
-
-            for item in extraido.get("rechazados") or []:
-                fecha_url = _fecha_url_dogv(item.get("url"))
-                fecha_semilla = fecha_url or item.get("fecha_publicacion")
-                if fecha_semilla:
-                    fechas_semilla.add(str(fecha_semilla))
-
-            try:
-                descubrimiento_directo = _descubrir_dogv_en_fechas(
-                    dogv,
-                    identidad=identidad,
-                    fechas_semilla=fechas_semilla,
-                )
-            except Exception as exc:
-                descubrimiento_directo = [{"error": f"{type(exc).__name__}: {exc}"}]
-
             salida.append({
                 "proceso_id": proceso_id,
                 "identificador_estable": proceso.get("identificador_estable"),
                 "denominacion": proceso.get("denominacion"),
                 "referencia_estatal": referencia,
                 "identidad": sorted(identidad),
-                "seguimientos_validos_actuales": sorted(actuales),
-                "vistos_guardados": sorted(vistos),
-                "vistos_huerfanos": sorted(vistos - actuales),
-                "actuales_no_vistos": sorted(actuales - vistos),
-                "rechazados": extraido.get("rechazados") or [],
-                "validaciones": validados,
-                "descubrimiento_dogv_directo": descubrimiento_directo,
+                "validaciones": validaciones,
+                "descubrimiento_dogv_directo": directos,
+                "plan_migracion": plan,
             })
-
-        diagnostico_gvborses = _diagnosticar_gvborses(dogv)
-
     return {
         "modo": "SOLO_DIAGNOSTICO",
         "escrituras_bd": False,
-        "fuente_asociacion": "administracion.gob.es",
-        "fuente_validacion": DOGV_API,
-        "fuente_bolsas": {
-            "url": GVBORSES_URL,
-            "conectividad": diagnostico_gvborses,
-        },
+        "fuente_propuesta": DOGV_API,
+        "regla_bolsas": "SEGUIMIENTO_SIMPLIFICADO",
         "procesos": salida,
         "resumen": {
             "procesos": len(salida),
-            "seguimientos_validos": sum(len(x["validaciones"]) for x in salida),
-            "validaciones_dogv_ok": sum(
-                sum(bool(v["validacion_dogv"]) for v in x["validaciones"])
-                for x in salida
-            ),
-            "descubrimientos_dogv_directos": sum(
-                sum(1 for y in x["descubrimiento_dogv_directo"] if not y.get("error"))
-                for x in salida
-            ),
-            "vistos_huerfanos": sum(len(x["vistos_huerfanos"]) for x in salida),
-            "actuales_no_vistos": sum(len(x["actuales_no_vistos"]) for x in salida),
-            "rechazados": sum(len(x["rechazados"]) for x in salida),
+            "convocatorias_a_migrar": sum(x["plan_migracion"]["accion"] == "MIGRAR_BASELINE_DOGV" for x in salida),
+            "bolsas_simplificadas": sum(x["plan_migracion"]["accion"] == "BOLSA_SEGUIMIENTO_SIMPLIFICADO" for x in salida),
+            "eliminaciones_estado_propuestas": sum(len(x["plan_migracion"].get("eliminar_del_estado") or []) for x in salida),
+            "incorporaciones_baseline_propuestas": sum(len(x["plan_migracion"].get("incorporar_al_baseline") or []) for x in salida),
         },
     }
