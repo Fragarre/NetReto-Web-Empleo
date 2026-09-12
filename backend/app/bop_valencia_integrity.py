@@ -107,6 +107,32 @@ def _es_publicacion_terminal(titulo: str | None, contenido: str | None = None) -
     return any(_bop._sin(x) in n for x in _TERMINALES)
 
 
+def _recalcular_ultima_publicacion() -> int:
+    """Mantiene ultima_publicacion_at igual a la fecha máxima realmente persistida."""
+    with get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE procesos p
+            SET ultima_publicacion_at = u.ultima_publicacion_at,
+                updated_at = NOW()
+            FROM (
+                SELECT proceso_id,
+                       MAX(fecha_publicacion)::timestamp AT TIME ZONE 'UTC' AS ultima_publicacion_at
+                FROM publicaciones
+                WHERE fecha_publicacion IS NOT NULL
+                GROUP BY proceso_id
+            ) u
+            WHERE p.id = u.proceso_id
+              AND p.identificador_estable LIKE 'DVAL:%%'
+              AND p.ultima_publicacion_at IS DISTINCT FROM u.ultima_publicacion_at
+            RETURNING p.id
+            """
+        )
+        corregidos = len(cursor.fetchall())
+        connection.commit()
+    return corregidos
+
+
 def _postprocesar_estado_terminal() -> int:
     """Cierra procesos solo con evidencia oficial terminal, aunque luego haya correcciones."""
     finalizados = 0
@@ -154,6 +180,7 @@ def _postprocesar_estado_terminal() -> int:
 
 def _importar_con_integridad(historico: bool = False, dias: int = 1):
     stats = _BASE_IMPORTAR_BOP(historico=historico, dias=dias)
+    stats["ultima_publicacion_recalculada"] = _recalcular_ultima_publicacion()
     stats["procesos_finalizados"] = _postprocesar_estado_terminal()
     return stats
 
