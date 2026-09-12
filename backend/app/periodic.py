@@ -7,6 +7,7 @@ import httpx
 
 from .boe_local_import import previsualizar_importacion_boe_local
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
+from .bop_valencia_municipios import importar_municipales_bop
 from .gva_estatal_service import importar_gva_estatal
 
 
@@ -17,13 +18,15 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
     """Orquesta las fuentes validadas de la primera fase de Empleo.
 
     Fuentes incluidas:
-    - BOP Valencia: Diputación y entidades locales de la provincia.
+    - BOP Valencia Diputación.
+    - BOP Valencia municipal: altas y seguimientos de ayuntamientos.
     - BOE local: altas/vinculaciones de convocatorias administrativas valencianas.
     - GVA estatal + seguimiento DOGV directo de convocatorias activas.
 
-    En SOLO_REVISION no se escribe en BD. El BOP no dispone de un modo de
-    previsualización completo, por lo que en revisión se ejecuta únicamente su
-    diagnóstico de lectura. En APLICADO se usa una ventana solapada para tolerar
+    En SOLO_REVISION no se escribe en BD. La parte municipal del BOP dispone
+    de previsualización real; la parte de Diputación mantiene únicamente su
+    diagnóstico de lectura porque su importador histórico no tiene dry-run.
+    En APLICADO todas las fuentes usan la misma ventana solapada para tolerar
     caídas puntuales sin depender de que el cron haya ejecutado el día anterior.
     """
     if dias_solape < 1 or dias_solape > 30:
@@ -41,7 +44,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
     }
 
     if aplicar:
-        resultado["fuentes"]["bop_valencia"] = importar_bop_valencia(
+        resultado["fuentes"]["bop_valencia_diputacion"] = importar_bop_valencia(
             historico=True,
             dias=dias_solape,
         )
@@ -51,10 +54,19 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
             "Accept-Language": "es-ES,es;q=0.9",
         }
         with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
-            resultado["fuentes"]["bop_valencia"] = {
+            resultado["fuentes"]["bop_valencia_diputacion"] = {
                 "modo": "SOLO_DIAGNOSTICO",
                 "resultado": diagnosticar_bop(client, fecha=fecha_hoy.isoformat()),
             }
+
+    # El BOP municipal sí tiene planificación idempotente y modo solo revisión.
+    # Se ejecuta antes que BOE para que este pueda vincular una convocatoria BOE
+    # con las bases municipales detectadas en la misma ejecución aplicada.
+    resultado["fuentes"]["bop_valencia_municipios"] = importar_municipales_bop(
+        hasta=fecha_hoy,
+        dias=dias_solape,
+        aplicar=aplicar,
+    )
 
     resultado["fuentes"]["boe_local"] = previsualizar_importacion_boe_local(
         hasta=fecha_hoy,
