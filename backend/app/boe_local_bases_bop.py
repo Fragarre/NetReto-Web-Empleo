@@ -4,8 +4,10 @@ import re
 import unicodedata
 from datetime import date
 from typing import Any
+from urllib.parse import quote
 
 import httpx
+from bs4 import BeautifulSoup
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -17,10 +19,12 @@ from .database import get_connection
 _BASE_PREVISUALIZAR = _boe_local.previsualizar_importacion_boe_local
 
 _STOPWORDS = {
-    "anunci", "anuncio", "ajuntament", "ayuntamiento", "aprovacio", "aprobacion",
-    "bases", "convocatoria", "proces", "proceso", "selectiu", "selectivo", "seleccion",
+    "anunci", "anuncio", "ajuntament", "ayuntamiento", "mancomunitat", "mancomunidad",
+    "aprovacio", "aprobacion", "aprovar", "aprobar", "bases", "convocatoria", "proces",
+    "proceso", "selectiu", "selectivo", "seleccion", "cobertura", "propietat", "propiedad",
     "placa", "places", "plaza", "plazas", "personal", "turno", "torn", "libre", "lliure",
     "administracio", "administracion", "general", "escala", "subescala", "sistema",
+    "concurs", "concurso", "oposicio", "oposicion", "mitjancant", "mediante", "sobre",
 }
 
 
@@ -29,15 +33,20 @@ def _sin(texto: str | None) -> str:
     return "".join(c for c in valor if unicodedata.category(c) != "Mn")
 
 
-def _municipio_objetivo(organismo: dict[str, Any]) -> str | None:
+def _entidad_objetivo(organismo: dict[str, Any]) -> str | None:
     municipio = organismo.get("municipio")
     if municipio:
         return _sin(str(municipio)).strip()
+
     nombre = _sin(str(organismo.get("nombre") or "")).strip()
-    for prefijo in ("ayuntamiento de ", "ajuntament de "):
+    prefijos = (
+        "ayuntamiento de ", "ajuntament de ",
+        "mancomunidad de ", "mancomunitat de ",
+    )
+    for prefijo in prefijos:
         if nombre.startswith(prefijo):
             return nombre[len(prefijo):].strip() or None
-    return None
+    return nombre or None
 
 
 def _palabras(texto: str | None) -> set[str]:
@@ -47,8 +56,23 @@ def _palabras(texto: str | None) -> set[str]:
     }
 
 
-def _score(denominacion: str | None, titulo: str | None) -> int:
-    return len(_palabras(denominacion) & _palabras(titulo))
+def _puntuacion(denominacion: str | None, titulo: str | None) -> tuple[int, int]:
+    palabras_denominacion = _palabras(denominacion)
+    palabras_titulo = _palabras(titulo)
+    comunes = len(palabras_denominacion & palabras_titulo)
+    extras = len(palabras_titulo - palabras_denominacion)
+    return comunes, -extras
+
+
+def _titulo_pertenece_entidad(titulo: str | None, entidad: str) -> bool:
+    nt = _sin(titulo)
+    ne = _sin(entidad).strip()
+    if not ne:
+        return False
+    if ne in nt:
+        return True
+    tokens = [p for p in re.findall(r"[a-z0-9]+", ne) if len(p) >= 3]
+    return bool(tokens) and all(p in nt for p in tokens)
 
 
 def _elegir_anuncio(
@@ -57,18 +81,33 @@ def _elegir_anuncio(
     organismo: dict[str, Any],
     denominacion: str | None,
 ) -> dict[str, Any] | None:
-    municipio = _municipio_objetivo(organismo)
-    if not municipio:
+    entidad = _entidad_objetivo(organismo)
+    if not entidad:
         return None
 
-    candidatos = [
-        a for a in anuncios
-        if _sin(a.get("municipio") or "").strip() == municipio
-    ]
+    candidatos = []
+    for anuncio in anuncios:
+        municipio_anuncio = _sin(anuncio.get("municipio") or "").strip()
+        if municipio_anuncio and municipio_anuncio == entidad:
+            candidatos.append(anuncio)
+            continue
+        if _titulo_pertenece_entidad(anuncio.get("titulo"), entidad):
+            candidatos.append(anuncio)
+
+    # El mismo anuncio puede proceder del extractor municipal y del fallback genérico.
+    unicos: dict[str, dict[str, Any]] = {}
+    for anuncio in candidatos:
+        clave = str(anuncio.get("registro") or anuncio.get("url") or anuncio.get("titulo"))
+        unicos[clave] = anuncio
+    candidatos = list(unicos.values())
+
     if not candidatos:
         return None
 
-    nuevas = [a for a in candidatos if _municipios._clasificar_anuncio(a.get("titulo") or "") == "NUEVA_CONVOCATORIA"]
+    nuevas = [
+        a for a in candidatos
+        if _municipios._clasificar_anuncio(a.get("titulo") or "") == "NUEVA_CONVOCATORIA"
+    ]
     if nuevas:
         candidatos = nuevas
 
@@ -76,15 +115,46 @@ def _elegir_anuncio(
         return candidatos[0]
 
     puntuados = sorted(
-        ((_score(denominacion, a.get("titulo")), a) for a in candidatos),
+        ((_puntuacion(denominacion, a.get("titulo")), a) for a in candidatos),
         key=lambda x: x[0],
         reverse=True,
     )
-    if not puntuados or puntuados[0][0] <= 0:
+    if not puntuados or puntuados[0][0][0] <= 0:
         return None
     if len(puntuados) > 1 and puntuados[1][0] == puntuados[0][0]:
         return None
     return puntuados[0][1]
+
+
+def _extraer_anuncios_genericos(html: str) -> list[dict[str, Any]]:
+    """Extrae anuncios del índice diario aunque no sean AYUNTAMIENTO.
+
+    Se usa solo como fallback para resolver una fecha BOP ya proporcionada por el BOE.
+    """
+    texto = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    texto = " ".join(texto.split())
+    patron = re.compile(r"N[uú]m\.\s*(?:de\s*)?(?:registre|registro)\s*:?\s*(\d{4}/\d+)", re.I)
+    resultados: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    for mr in patron.finditer(texto):
+        registro = mr.group(1)
+        if registro in vistos:
+            continue
+        inicio = max(texto.rfind("Anunci", 0, mr.start()), texto.rfind("Anuncio", 0, mr.start()))
+        if inicio < 0:
+            continue
+        titulo = " ".join(texto[inicio:mr.start()].split()).rstrip(".") + "."
+        if len(titulo) > 1000:
+            continue
+        vistos.add(registro)
+        resultados.append({
+            "titulo": titulo,
+            "url": f"https://bop.dival.es/bop/downloads?anuncioNumReg={quote(registro)}&lang=es",
+            "registro": registro,
+            "fecha_publicacion": None,
+            "municipio": None,
+        })
+    return resultados
 
 
 def _leer_anuncios_fecha(client: httpx.Client, fecha: date) -> tuple[list[dict[str, Any]], str | None]:
@@ -97,7 +167,13 @@ def _leer_anuncios_fecha(client: httpx.Client, fecha: date) -> tuple[list[dict[s
     if not html:
         return [], "BOP sin contenido para la fecha indicada"
     try:
-        return _municipios._extraer_anuncios_municipales(html), None
+        municipales = _municipios._extraer_anuncios_municipales(html)
+        genericos = _extraer_anuncios_genericos(html)
+        unicos: dict[str, dict[str, Any]] = {}
+        for anuncio in [*municipales, *genericos]:
+            clave = str(anuncio.get("registro") or anuncio.get("url") or anuncio.get("titulo"))
+            unicos[clave] = anuncio
+        return list(unicos.values()), None
     except Exception as exc:
         return [], f"{type(exc).__name__}: {str(exc)[:180]}"
 
@@ -106,7 +182,7 @@ def reconciliar_bases_bop_boe_local(*, aplicar: bool = False) -> dict[str, Any]:
     """Resuelve el PDF BOP de bases de procesos BOELOCAL que aún enlazan solo al BOE.
 
     El BOE aporta fecha/número del BOP. Se consulta exclusivamente ese día y solo se
-    acepta una coincidencia inequívoca del mismo ayuntamiento. En caso de duda no se
+    acepta una coincidencia inequívoca de la misma entidad local. En caso de duda no se
     modifica nada.
     """
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -149,14 +225,6 @@ def reconciliar_bases_bop_boe_local(*, aplicar: bool = False) -> dict[str, Any]:
                 "municipio": proceso.get("municipio"),
                 "tipo": proceso.get("tipo"),
             }
-            if organismo.get("tipo") != "AYUNTAMIENTO":
-                stats["ambiguos_o_no_encontrados"] += 1
-                stats["detalle"].append({
-                    "proceso_id": proceso["id"],
-                    "identificador_estable": proceso["identificador_estable"],
-                    "estado": "NO_AYUNTAMIENTO",
-                })
-                continue
 
             bases = (proceso.get("datos_json") or {}).get("bases_bop") or {}
             try:
