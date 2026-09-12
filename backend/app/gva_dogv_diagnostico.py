@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -18,6 +19,14 @@ DOGV_API = "https://dogv.gva.es/dogv-portal"
 def _codigo_insercion(signatura: str) -> str:
     anio, numero = signatura.split("_", 1)
     return f"{anio}/{numero}"
+
+
+def _fecha_oficial_desde_url(url: str | None) -> str | None:
+    """Extrae la fecha inequívoca de una URL PDF DOGV, si está presente."""
+    m = re.search(r"/datos/(\d{4})/(\d{2})/(\d{2})/", str(url or ""), re.I)
+    if not m:
+        return None
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 
 
 def _obtener_disposicion_dogv(
@@ -110,9 +119,14 @@ def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
 
             validados: list[dict[str, Any]] = []
             for item in extraido.get("validos") or []:
+                fecha_extraida = item.get("fecha_publicacion")
+                fecha_url = _fecha_oficial_desde_url(item.get("url"))
+                fecha_validacion = fecha_url or fecha_extraida
                 auditoria: dict[str, Any] = {
                     "signatura": item["signatura"],
-                    "fecha_publicacion": item.get("fecha_publicacion"),
+                    "fecha_publicacion_extraida": fecha_extraida,
+                    "fecha_publicacion_url": fecha_url,
+                    "fecha_validacion_dogv": fecha_validacion,
                     "titulo_estatal": item.get("titulo"),
                     "tokens_estatal": item.get("tokens") or [],
                     "coincidencias_identidad_estatal": item.get("coincidencias_identidad") or [],
@@ -121,7 +135,7 @@ def diagnosticar_seguimiento_dogv() -> dict[str, Any]:
                     oficial = _obtener_disposicion_dogv(
                         dogv,
                         signatura=item["signatura"],
-                        fecha_publicacion=item.get("fecha_publicacion"),
+                        fecha_publicacion=fecha_validacion,
                     )
                 except Exception as exc:
                     oficial = {"ok": False, "motivo": f"{type(exc).__name__}: {exc}"}
