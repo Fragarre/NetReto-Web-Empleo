@@ -75,16 +75,14 @@ def _titulo_pertenece_entidad(titulo: str | None, entidad: str) -> bool:
     return bool(tokens) and all(p in nt for p in tokens)
 
 
-def _elegir_anuncio(
+def _candidatos_entidad(
     anuncios: list[dict[str, Any]],
     *,
     organismo: dict[str, Any],
-    denominacion: str | None,
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
     entidad = _entidad_objetivo(organismo)
     if not entidad:
-        return None
-
+        return []
     candidatos = []
     for anuncio in anuncios:
         municipio_anuncio = _sin(anuncio.get("municipio") or "").strip()
@@ -93,14 +91,20 @@ def _elegir_anuncio(
             continue
         if _titulo_pertenece_entidad(anuncio.get("titulo"), entidad):
             candidatos.append(anuncio)
-
-    # El mismo anuncio puede proceder del extractor municipal y del fallback genérico.
     unicos: dict[str, dict[str, Any]] = {}
     for anuncio in candidatos:
         clave = str(anuncio.get("registro") or anuncio.get("url") or anuncio.get("titulo"))
         unicos[clave] = anuncio
-    candidatos = list(unicos.values())
+    return list(unicos.values())
 
+
+def _elegir_anuncio(
+    anuncios: list[dict[str, Any]],
+    *,
+    organismo: dict[str, Any],
+    denominacion: str | None,
+) -> dict[str, Any] | None:
+    candidatos = _candidatos_entidad(anuncios, organismo=organismo)
     if not candidatos:
         return None
 
@@ -124,6 +128,40 @@ def _elegir_anuncio(
     if len(puntuados) > 1 and puntuados[1][0] == puntuados[0][0]:
         return None
     return puntuados[0][1]
+
+
+def _diagnostico_candidatos(
+    anuncios: list[dict[str, Any]],
+    *,
+    organismo: dict[str, Any],
+    denominacion: str | None,
+) -> dict[str, Any]:
+    entidad = _entidad_objetivo(organismo)
+    candidatos = _candidatos_entidad(anuncios, organismo=organismo)
+    tokens_entidad = {
+        p for p in re.findall(r"[a-z0-9]+", _sin(entidad or ""))
+        if len(p) >= 4
+    }
+    cercanos = []
+    for anuncio in anuncios:
+        titulo = anuncio.get("titulo") or ""
+        nt = _sin(titulo)
+        if tokens_entidad and any(token in nt for token in tokens_entidad):
+            cercanos.append(anuncio)
+    def resumir(a: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "registro": a.get("registro"),
+            "municipio": a.get("municipio"),
+            "clase": _municipios._clasificar_anuncio(a.get("titulo") or ""),
+            "puntuacion": list(_puntuacion(denominacion, a.get("titulo"))),
+            "titulo": (a.get("titulo") or "")[:500],
+        }
+    return {
+        "entidad_objetivo": entidad,
+        "total_anuncios_fecha": len(anuncios),
+        "coincidencias_entidad": [resumir(a) for a in candidatos[:12]],
+        "anuncios_cercanos": [resumir(a) for a in cercanos[:12]],
+    }
 
 
 def _extraer_anuncios_genericos(html: str) -> list[dict[str, Any]]:
@@ -258,6 +296,11 @@ def reconciliar_bases_bop_boe_local(*, aplicar: bool = False) -> dict[str, Any]:
                     "identificador_estable": proceso["identificador_estable"],
                     "estado": "SIN_COINCIDENCIA_INEQUIVOCA",
                     "fecha_bop": fecha.isoformat(),
+                    "diagnostico": _diagnostico_candidatos(
+                        anuncios,
+                        organismo=organismo,
+                        denominacion=proceso.get("denominacion"),
+                    ),
                 })
                 continue
 
