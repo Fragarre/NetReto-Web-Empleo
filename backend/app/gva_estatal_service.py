@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from . import gva_clean
+from .gva_dogv_diagnostico import diagnosticar_seguimiento_dogv
 from .gva_estatal_import import construir_registro
 from .gva_estatal_persist import persistir_registros
 from .gva_estatal_seguimiento import actualizar_seguimientos_gva
@@ -351,6 +352,7 @@ def importar_gva_estatal(*, desde: date, hasta: date, aplicar: bool = False) -> 
 
     persistencia = persistir_registros(registros, aplicar=aplicar)
     seguimiento = actualizar_seguimientos_gva(aplicar=aplicar)
+    auditoria_dogv = diagnosticar_seguimiento_dogv() if not aplicar else None
     return {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
         "desde": desde.isoformat(),
@@ -363,4 +365,5 @@ def importar_gva_estatal(*, desde: date, hasta: date, aplicar: bool = False) -> 
         "revision": revision,
         "persistencia": persistencia,
         "seguimiento": seguimiento,
+        "auditoria_dogv": auditoria_dogv,
     }
