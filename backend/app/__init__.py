@@ -38,3 +38,7 @@ _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial
 _aplicar_reglas_bop()
 _aplicar_integridad_bop()
 _aplicar_reglas_seguimiento_boe_local()
+
+# Registra sobre el router administrativo ya existente el endpoint seguro
+# utilizado por la automatización periódica.
+from . import periodic_endpoint as _periodic_endpoint  # noqa: E402,F401
