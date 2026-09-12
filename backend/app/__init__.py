@@ -34,11 +34,13 @@ from .bop_valencia_rules import aplicar_reglas_bop as _aplicar_reglas_bop
 from .bop_valencia_integrity import aplicar_integridad_bop as _aplicar_integridad_bop
 from .boe_local_seguimiento_rules import aplicar_reglas_seguimiento_boe_local as _aplicar_reglas_seguimiento_boe_local
 from .boe_local_bases_bop import aplicar_resolucion_bases_bop as _aplicar_resolucion_bases_bop
+from .bop_structural_records import aplicar_extraccion_estructural_bop as _aplicar_extraccion_estructural_bop
 
 _empleo_admin.extraer_temario_oficial = _extraer_temario_oficial
 _aplicar_reglas_bop()
 _aplicar_integridad_bop()
 _aplicar_reglas_seguimiento_boe_local()
+_aplicar_extraccion_estructural_bop()
 _aplicar_resolucion_bases_bop()
 
 # Registra sobre el router administrativo ya existente el endpoint seguro
