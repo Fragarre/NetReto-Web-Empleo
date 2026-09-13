@@ -2,8 +2,6 @@ name: Actualización NetReto Empleo
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 7 * * *"
 
 jobs:
   actualizar:
@@ -23,5 +21,5 @@ jobs:
       - name: Ejecutar actualización
         env:
           EMPLOYMENT_IMPORT_SECRET: ${{ secrets.EMPLOYMENT_IMPORT_SECRET }}
-          NETRETO_EMPLEO_API_URL: https://netreto-empleo-api.onrender.com
+          NETRETO_EMPLEO_API_URL: https://opocoach-web-staging-backend.onrender.com/empleo
         run: python backend/app/cron_actualizacion.py
