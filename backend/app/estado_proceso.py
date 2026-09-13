@@ -52,6 +52,14 @@ _TERMINALES_BOLSA = (
     "aprovacio definitiva de la borsa",
 )
 
+_NUMEROS_PLAZO = {
+    "cinco": 5,
+    "diez": 10,
+    "quince": 15,
+    "veinte": 20,
+    "treinta": 30,
+}
+
 
 def es_bolsa(tipo_proceso: str | None) -> bool:
     return "bolsa" in _sin(tipo_proceso) or "borsa" in _sin(tipo_proceso)
@@ -77,6 +85,17 @@ def clasificar_evento_terminal(tipo_proceso: str | None, titulo: str | None) -> 
     return None
 
 
+def _dias_habiles_literal(literal: str) -> int | None:
+    normalizado = _sin(literal)
+    m = re.search(r"\b(\d+)\s+dias?\s+habiles\b", normalizado, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"\b([a-z]+)\s+dias?\s+habiles\b", normalizado, re.I)
+    if m:
+        return _NUMEROS_PLAZO.get(m.group(1))
+    return None
+
+
 def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> dict[str, Any]:
     """Deriva la situación de inscripción sin mezclarla con el ciclo selectivo."""
     hoy = hoy or date.today()
@@ -99,8 +118,7 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
     ).strip()
     fecha_boe = proceso.get("fecha_boe_publicacion") or proceso.get("fecha_convocatoria")
     if literal and fecha_boe:
-        m = re.search(r"(\d+)\s+d[ií]as?\s+h[aá]biles", _sin(literal), re.I)
-        dias = int(m.group(1)) if m else None
+        dias = _dias_habiles_literal(literal)
         return {
             "codigo": "PLAZO_LITERAL",
             "fecha_referencia": fecha_boe + timedelta(days=1),
