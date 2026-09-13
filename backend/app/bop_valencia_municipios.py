@@ -16,6 +16,7 @@ from . import bop_valencia as _bop
 from . import bop_valencia_patch as _bop_patch
 from .ambito_administrativo import clasificar_ambito_administrativo
 from .database import get_connection
+from .estado_proceso import clasificar_evento_terminal
 
 
 def _sin(s: str) -> str:
@@ -213,7 +214,7 @@ def _buscar_proceso_seguimiento(cursor, hallazgo: dict[str, Any]) -> tuple[dict[
     codigo_seguimiento = _extraer_codigo_proceso(hallazgo["titulo"])
     cursor.execute(
         """
-        SELECT p.id,p.denominacion,p.plazas,p.estado,p.fecha_convocatoria,o.municipio
+        SELECT p.id,p.denominacion,p.plazas,p.estado,p.tipo_proceso,p.fecha_convocatoria,o.municipio
         FROM procesos p
         JOIN organismos o ON o.id=p.organismo_id
         WHERE o.tipo='AYUNTAMIENTO'
@@ -269,12 +270,13 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                 resultado["seguimientos_vinculados"] += 1
                 plazas_nuevas = _extraer_plazas(h["titulo"])
                 cambia_plazas = plazas_nuevas is not None and plazas_nuevas != proceso.get("plazas")
-                finaliza = _es_finalizacion(h["titulo"]) and proceso.get("estado") != "FINALIZADO"
+                estado_terminal = clasificar_evento_terminal(proceso.get("tipo_proceso"), h["titulo"])
+                finaliza = bool(estado_terminal) and str(proceso.get("estado") or "").upper() not in {"FINALIZADO", "DESISTIDO", "ANULADO", "CANCELADO"}
                 if cambia_plazas:
                     item["plazas_anterior"] = proceso.get("plazas")
                     item["plazas_nueva"] = plazas_nuevas
                 if finaliza:
-                    item["estado_nuevo"] = "FINALIZADO"
+                    item["estado_nuevo"] = estado_terminal
                 if aplicar:
                     cursor.execute("SELECT id FROM publicaciones WHERE fuente_id=2 AND referencia=%s LIMIT 1", (h["registro"],))
                     pub = cursor.fetchone()
@@ -290,7 +292,8 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                         updates.append("plazas=%s")
                         params.append(plazas_nuevas)
                     if finaliza:
-                        updates.append("estado='FINALIZADO'")
+                        updates.append("estado=%s")
+                        params.append(estado_terminal)
                     if publicacion_nueva:
                         updates.append("ultima_publicacion_at=%s")
                         params.append(h["fecha_publicacion"])
