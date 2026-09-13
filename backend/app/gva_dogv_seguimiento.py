@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .database import get_connection
+from .estado_proceso import clasificar_evento_terminal
 from .gva_dogv_diagnostico import (
     DOGV_API,
     _descubrir_dogv_en_fechas,
@@ -146,6 +147,7 @@ def _planificar() -> dict[str, Any]:
                 "proceso_id": int(proceso["id"]),
                 "identificador_estable": proceso.get("identificador_estable"),
                 "denominacion": proceso.get("denominacion"),
+                "tipo_proceso": proceso.get("tipo_proceso"),
                 "referencia_estatal": int(proceso["referencia_estatal"]),
             }
 
@@ -259,7 +261,7 @@ def _insertar_publicacion(
     proceso_id: int,
     referencia_estatal: int,
     item: dict[str, Any],
-) -> bool:
+) -> int | None:
     referencia = f"GVADOGV:{referencia_estatal}:{item['signatura']}"
     cursor.execute(
         """
@@ -268,6 +270,7 @@ def _insertar_publicacion(
             fecha_publicacion, url, datos_json, detectada_at
         ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NOW())
         ON CONFLICT (fuente_id, referencia, url) DO NOTHING
+        RETURNING id
         """,
         (
             proceso_id,
@@ -288,7 +291,8 @@ def _insertar_publicacion(
             }),
         ),
     )
-    return cursor.rowcount == 1
+    fila = cursor.fetchone()
+    return int(fila["id"]) if fila else None
 
 
 def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]:
@@ -305,6 +309,7 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
 
     publicaciones_creadas = 0
     migraciones_aplicadas = 0
+    procesos_finalizados = 0
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         fuente_dogv_id = _resolver_fuente_dogv(cursor)
         for accion in plan["acciones"]:
@@ -329,16 +334,46 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
 
             fechas_creadas: list[str] = []
             for item in accion.get("novedades") or []:
-                if _insertar_publicacion(
+                publicacion_id = _insertar_publicacion(
                     cursor,
                     fuente_dogv_id=fuente_dogv_id,
                     proceso_id=int(accion["proceso_id"]),
                     referencia_estatal=int(accion["referencia_estatal"]),
                     item=item,
-                ):
+                )
+                if publicacion_id is not None:
                     publicaciones_creadas += 1
                     if item.get("fecha_publicacion"):
                         fechas_creadas.append(str(item["fecha_publicacion"]))
+                    estado_terminal = clasificar_evento_terminal(
+                        accion.get("tipo_proceso"),
+                        item.get("titulo"),
+                    )
+                    if estado_terminal:
+                        cursor.execute("SELECT estado FROM procesos WHERE id=%s", (int(accion["proceso_id"]),))
+                        fila_estado = cursor.fetchone()
+                        estado_anterior = fila_estado.get("estado") if fila_estado else None
+                        if str(estado_anterior or "").upper() not in {"FINALIZADO", "DESISTIDO", "ANULADO", "CANCELADO"}:
+                            cursor.execute(
+                                "UPDATE procesos SET estado=%s,updated_at=NOW() WHERE id=%s",
+                                (estado_terminal, int(accion["proceso_id"])),
+                            )
+                            cursor.execute(
+                                """
+                                INSERT INTO cambios (
+                                    proceso_id,publicacion_id,tipo,campo,
+                                    valor_anterior,valor_nuevo,resumen,significativo
+                                ) VALUES (%s,%s,'ACTUALIZACION','estado',%s,%s,%s,TRUE)
+                                """,
+                                (
+                                    int(accion["proceso_id"]),
+                                    publicacion_id,
+                                    estado_anterior,
+                                    estado_terminal,
+                                    "Proceso selectivo resuelto según publicación oficial",
+                                ),
+                            )
+                            procesos_finalizados += 1
 
             _guardar_estado(
                 cursor,
@@ -369,4 +404,5 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
         **plan,
         "migraciones_aplicadas": migraciones_aplicadas,
         "publicaciones_creadas": publicaciones_creadas,
+        "procesos_finalizados": procesos_finalizados,
     }
