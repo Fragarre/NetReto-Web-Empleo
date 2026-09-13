@@ -5,6 +5,7 @@ import re
 
 from . import bop_valencia as _bop
 from .database import get_connection
+from .estado_proceso import clasificar_evento_terminal
 
 _BASE_IMPORTAR_BOP = _bop.importar_bop_valencia
 
@@ -91,24 +92,6 @@ def _identificador_estable(titulo: str, texto: str) -> str:
     return f"{base}:{sufijo}"
 
 
-_TERMINALES = (
-    "finalizacion del proceso", "finalitzacio del proces",
-    "desistimiento", "desistiment",
-    "nombramiento como funcionario", "nombramiento de funcionario",
-    "nombramiento mediante concurso",
-    "nomenament com a funcionari", "nomenament de funcionari",
-    "nomenament mitjancant concurs",
-    "toma de posesion", "presa de possessio",
-    "adjudicacion de destinos", "adjudicacio de destinacions",
-)
-
-
-def _es_publicacion_terminal(titulo: str | None, contenido: str | None = None) -> bool:
-    """Exige evidencia terminal en el título oficial, no en el texto interno de las bases."""
-    n = _bop._sin(titulo or "")
-    return any(_bop._sin(x) in n for x in _TERMINALES)
-
-
 def _recalcular_ultima_publicacion() -> int:
     """Mantiene ultima_publicacion_at igual a la fecha máxima realmente persistida."""
     with get_connection() as connection, connection.cursor() as cursor:
@@ -136,44 +119,45 @@ def _recalcular_ultima_publicacion() -> int:
 
 
 def _postprocesar_estado_terminal() -> int:
-    """Cierra procesos solo con evidencia oficial terminal, aunque luego haya correcciones."""
+    """Cierra procesos solo con evidencia oficial terminal en el título."""
     finalizados = 0
     with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
-            SELECT p.id, p.estado, pub.id, pub.titulo, pub.contenido_texto
+            SELECT p.id, p.estado, p.tipo_proceso, pub.id, pub.titulo
             FROM procesos p
             JOIN LATERAL (
-                SELECT id,titulo,contenido_texto,fecha_publicacion
+                SELECT id,titulo,fecha_publicacion
                 FROM publicaciones
                 WHERE proceso_id=p.id
                 ORDER BY fecha_publicacion DESC NULLS LAST,id DESC
             ) pub ON TRUE
             WHERE p.identificador_estable LIKE 'DVAL:%%'
-              AND COALESCE(LOWER(p.estado),'') NOT IN ('finalizado','cancelado','desistido')
+              AND COALESCE(LOWER(p.estado),'') NOT IN ('finalizado','cancelado','desistido','anulado')
             ORDER BY p.id, pub.fecha_publicacion DESC NULLS LAST, pub.id DESC
             """
         )
-        terminal_por_proceso: dict[int, tuple[str, int]] = {}
-        for proceso_id, estado_anterior, publicacion_id, titulo, contenido in cursor.fetchall():
+        terminal_por_proceso: dict[int, tuple[str, int, str]] = {}
+        for proceso_id, estado_anterior, tipo_proceso, publicacion_id, titulo in cursor.fetchall():
             if proceso_id in terminal_por_proceso:
                 continue
-            if _es_publicacion_terminal(titulo, contenido):
-                terminal_por_proceso[proceso_id] = (estado_anterior, publicacion_id)
+            estado_nuevo = clasificar_evento_terminal(tipo_proceso, titulo)
+            if estado_nuevo:
+                terminal_por_proceso[proceso_id] = (estado_anterior, publicacion_id, estado_nuevo)
 
-        for proceso_id, (estado_anterior, publicacion_id) in terminal_por_proceso.items():
+        for proceso_id, (estado_anterior, publicacion_id, estado_nuevo) in terminal_por_proceso.items():
             cursor.execute(
-                "UPDATE procesos SET estado='FINALIZADO',updated_at=NOW() WHERE id=%s AND COALESCE(LOWER(estado),'') <> 'finalizado'",
-                (proceso_id,),
+                "UPDATE procesos SET estado=%s,updated_at=NOW() WHERE id=%s AND COALESCE(LOWER(estado),'') NOT IN ('finalizado','cancelado','desistido','anulado')",
+                (estado_nuevo, proceso_id),
             )
             if not cursor.rowcount:
                 continue
             cursor.execute(
                 """
                 INSERT INTO cambios (proceso_id,publicacion_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo)
-                VALUES (%s,%s,'ACTUALIZACION','estado',%s,'FINALIZADO','Proceso selectivo finalizado según publicación oficial',TRUE)
+                VALUES (%s,%s,'ACTUALIZACION','estado',%s,%s,'Proceso selectivo resuelto según publicación oficial',TRUE)
                 """,
-                (proceso_id, publicacion_id, estado_anterior),
+                (proceso_id, publicacion_id, estado_anterior, estado_nuevo),
             )
             finalizados += 1
         connection.commit()
