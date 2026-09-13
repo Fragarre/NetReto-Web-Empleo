@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 
 from .database import get_connection
 from .estado_proceso import clasificar_evento_terminal
+from .gva_bolsas_seguimiento import actualizar_bolsas_gva_simplificadas
 from .gva_dogv_diagnostico import (
     DOGV_API,
     _descubrir_dogv_en_fechas,
@@ -305,7 +306,8 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
     """
     plan = _planificar()
     if not aplicar:
-        return {"modo": "SOLO_REVISION", "escrituras_bd": False, **plan}
+        bolsas = actualizar_bolsas_gva_simplificadas(aplicar=False)
+        return {"modo": "SOLO_REVISION", "escrituras_bd": False, **plan, "bolsas": bolsas}
 
     publicaciones_creadas = 0
     migraciones_aplicadas = 0
@@ -398,6 +400,7 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
                     (fecha_max, fecha_max, int(accion["proceso_id"])),
                 )
 
+    bolsas = actualizar_bolsas_gva_simplificadas(aplicar=True)
     return {
         "modo": "APLICADO",
         "escrituras_bd": True,
@@ -405,4 +408,5 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
         "migraciones_aplicadas": migraciones_aplicadas,
         "publicaciones_creadas": publicaciones_creadas,
         "procesos_finalizados": procesos_finalizados,
+        "bolsas": bolsas,
     }
