@@ -60,6 +60,7 @@ SELECT_FIELDS = """
        p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
        p.lugar_examen, p.ultima_publicacion_at,
        p.fuente_principal_id, p.datos_json,
+       (SELECT MAX(pub_boe.fecha_publicacion) FROM publicaciones pub_boe JOIN fuentes f_boe ON f_boe.id=pub_boe.fuente_id WHERE pub_boe.proceso_id=p.id AND UPPER(COALESCE(f_boe.tipo,''))='BOE') AS fecha_boe_publicacion,
        COALESCE(
            NULLIF(TRIM(COALESCE(p.datos_json->>'url_detalle','')), ''),
            NULLIF(TRIM(COALESCE(p.datos_json->>'url_oficial','')), ''),

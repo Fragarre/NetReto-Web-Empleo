@@ -91,8 +91,13 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
         return {"codigo": "CERRADO", "fecha_apertura": apertura, "fecha_cierre": cierre}
 
     datos = proceso.get("datos_json") or {}
-    literal = str(datos.get("plazo_solicitudes_literal") or "").strip()
-    fecha_boe = proceso.get("fecha_convocatoria")
+    boe_local = datos.get("boe_local") if isinstance(datos.get("boe_local"), dict) else {}
+    literal = str(
+        datos.get("plazo_solicitudes_literal")
+        or boe_local.get("plazo_solicitudes_literal")
+        or ""
+    ).strip()
+    fecha_boe = proceso.get("fecha_boe_publicacion") or proceso.get("fecha_convocatoria")
     if literal and fecha_boe:
         m = re.search(r"(\d+)\s+d[ií]as?\s+h[aá]biles", _sin(literal), re.I)
         dias = int(m.group(1)) if m else None
@@ -104,7 +109,6 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
         }
 
     origen = str(datos.get("origen") or "").upper()
-    boe_local = datos.get("boe_local")
     if origen == "BOP_VALENCIA_MUNICIPAL" and not boe_local:
         return {"codigo": "PENDIENTE_BOE"}
 
