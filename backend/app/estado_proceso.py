@@ -60,17 +60,31 @@ _NUMEROS_PLAZO = {
     "treinta": 30,
 }
 
+# Calendario administrativo de la Comunitat Valenciana. Se mantiene por año
+# para no calcular fechas exactas con un calendario que no haya sido verificado.
+_FESTIVOS_CV: dict[int, set[date]] = {
+    2026: {
+        date(2026, 1, 1), date(2026, 1, 6), date(2026, 3, 19),
+        date(2026, 4, 3), date(2026, 4, 6), date(2026, 5, 1),
+        date(2026, 6, 24), date(2026, 8, 15), date(2026, 10, 9),
+        date(2026, 10, 12), date(2026, 12, 8), date(2026, 12, 25),
+    }
+}
+
+# Fiestas locales verificadas. Solo se ofrece fecha de cierre calculada cuando
+# conocemos también el calendario local del organismo; en los demás casos se
+# conserva el plazo literal para evitar una falsa precisión.
+_FESTIVOS_LOCALES: dict[tuple[int, str], set[date]] = {
+    (2026, "ayuntamiento de benavites"): {date(2026, 3, 18), date(2026, 4, 13)},
+}
+
 
 def es_bolsa(tipo_proceso: str | None) -> bool:
     return "bolsa" in _sin(tipo_proceso) or "borsa" in _sin(tipo_proceso)
 
 
 def clasificar_evento_terminal(tipo_proceso: str | None, titulo: str | None) -> str | None:
-    """Clasifica solo evidencias oficiales inequívocamente terminales.
-
-    Devuelve FINALIZADO, DESISTIDO, ANULADO o None. Ante cualquier duda se
-    conserva el proceso activo.
-    """
+    """Clasifica solo evidencias oficiales inequívocamente terminales."""
     n = _sin(titulo)
     if not n:
         return None
@@ -96,6 +110,25 @@ def _dias_habiles_literal(literal: str) -> int | None:
     return None
 
 
+def _calcular_cierre_habiles(fecha_boe: date, dias: int, organismo: str | None) -> date | None:
+    """Calcula el último día solo con calendario autonómico y local verificados."""
+    if dias <= 0 or fecha_boe.year not in _FESTIVOS_CV:
+        return None
+    clave = (fecha_boe.year, _sin(organismo))
+    locales = _FESTIVOS_LOCALES.get(clave)
+    if locales is None:
+        return None
+    festivos = _FESTIVOS_CV[fecha_boe.year] | locales
+    actual = fecha_boe
+    contados = 0
+    while contados < dias:
+        actual += timedelta(days=1)
+        if actual.weekday() >= 5 or actual in festivos:
+            continue
+        contados += 1
+    return actual
+
+
 def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> dict[str, Any]:
     """Deriva la situación de inscripción sin mezclarla con el ciclo selectivo."""
     hoy = hoy or date.today()
@@ -119,6 +152,25 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
     fecha_boe = proceso.get("fecha_boe_publicacion") or proceso.get("fecha_convocatoria")
     if literal and fecha_boe:
         dias = _dias_habiles_literal(literal)
+        cierre_calculado = _calcular_cierre_habiles(
+            fecha_boe, dias, proceso.get("organismo_nombre")
+        ) if dias else None
+        if cierre_calculado:
+            apertura_calculada = fecha_boe + timedelta(days=1)
+            if hoy < apertura_calculada:
+                codigo = "PENDIENTE_APERTURA"
+            elif hoy <= cierre_calculado:
+                codigo = "ABIERTO"
+            else:
+                codigo = "CERRADO"
+            return {
+                "codigo": codigo,
+                "fecha_apertura": apertura_calculada,
+                "fecha_cierre": cierre_calculado,
+                "fecha_cierre_calculada": True,
+                "dias_habiles": dias,
+                "literal": literal,
+            }
         return {
             "codigo": "PLAZO_LITERAL",
             "fecha_referencia": fecha_boe + timedelta(days=1),
