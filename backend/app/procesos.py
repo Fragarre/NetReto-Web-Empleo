@@ -1,6 +1,7 @@
 from typing import Any
 
 from .database import get_connection
+from .estado_proceso import estado_inscripcion
 
 
 TIPOS_EXCLUIDOS = (
@@ -80,6 +81,18 @@ SELECT_FIELDS = """
 """
 
 
+def _enriquecer_proceso(fila: dict[str, Any]) -> dict[str, Any]:
+    enriquecida = dict(fila)
+    inscripcion = estado_inscripcion(enriquecida)
+    enriquecida["estado_inscripcion"] = inscripcion["codigo"]
+    enriquecida["inscripcion"] = inscripcion
+    # ABIERTO era un estado histórico que mezclaba plazo de solicitud y ciclo
+    # selectivo. De cara a la API se normaliza a EN_CURSO sin alterar la BD.
+    if str(enriquecida.get("estado") or "").upper() == "ABIERTO":
+        enriquecida["estado"] = "EN_CURSO"
+    return enriquecida
+
+
 def listar_procesos(*, organismo_id: int | None = None, estado: str | None = None, limite: int = 100) -> list[dict[str, Any]]:
     """Lista oportunidades administrativas cuyo proceso selectivo sigue activo."""
     limite = max(1, min(limite, 200))
@@ -93,7 +106,7 @@ def listar_procesos(*, organismo_id: int | None = None, estado: str | None = Non
     params.append(limite)
     with get_connection() as connection, connection.cursor() as cursor:
         cursor.execute(query, tuple(params)); rows=cursor.fetchall(); columns=[d.name for d in cursor.description]
-    return [dict(zip(columns,row)) for row in rows]
+    return [_enriquecer_proceso(dict(zip(columns,row))) for row in rows]
 
 
 def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
@@ -106,4 +119,4 @@ def obtener_proceso(proceso_id: int) -> dict[str, Any] | None:
         row=cursor.fetchone()
         if row is None: return None
         columns=[d.name for d in cursor.description]
-    return dict(zip(columns,row))
+    return _enriquecer_proceso(dict(zip(columns,row)))
