@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from typing import Any
 
@@ -8,6 +9,8 @@ from fastapi import Header, HTTPException, Query
 
 from .empleo_admin_catalogo import router
 from .periodic import ejecutar_periodico
+
+logger = logging.getLogger(__name__)
 
 
 def _autorizado(x_import_secret: str | None, x_cron_secret: str | None) -> bool:
@@ -35,4 +38,5 @@ def periodic_empleo(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Error en ciclo periódico de Empleo")
         raise HTTPException(status_code=502, detail=f"Error en ciclo periódico de Empleo: {exc}") from exc
