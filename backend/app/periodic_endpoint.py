@@ -5,6 +5,7 @@ import logging
 import os
 from typing import Any
 
+import httpx
 from fastapi import Header, HTTPException, Query
 
 from .empleo_admin_catalogo import router
@@ -40,3 +41,44 @@ def periodic_empleo(
     except Exception as exc:
         logger.exception("Error en ciclo periódico de Empleo")
         raise HTTPException(status_code=502, detail=f"Error en ciclo periódico de Empleo: {exc}") from exc
+
+
+@router.post("/periodic-diagnostico-fuente")
+def periodic_diagnostico_fuente(
+    x_import_secret: str | None = Header(default=None),
+    x_cron_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Diagnóstico temporal, de solo lectura, del nuevo buscador estatal."""
+    if not _autorizado(x_import_secret, x_cron_secret):
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    url = "https://administracion.gob.es/empleopublico/resultadosEmpleo"
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(45.0, connect=15.0),
+            headers={
+                "User-Agent": "NetReto-Empleo/1.0 (https://netexamenes.com)",
+                "Accept-Language": "es-ES,es;q=0.9",
+            },
+            follow_redirects=True,
+        ) as client:
+            respuesta = client.get(url)
+
+        muestra = respuesta.text[:12000]
+        logger.warning(
+            "DIAGNOSTICO_FUENTE_ESTATAL status=%s url_final=%s content_type=%s longitud=%s muestra=%r",
+            respuesta.status_code,
+            str(respuesta.url),
+            respuesta.headers.get("content-type"),
+            len(respuesta.content),
+            muestra,
+        )
+        return {
+            "status": respuesta.status_code,
+            "url_final": str(respuesta.url),
+            "content_type": respuesta.headers.get("content-type"),
+            "longitud": len(respuesta.content),
+        }
+    except Exception as exc:
+        logger.exception("DIAGNOSTICO_FUENTE_ESTATAL error")
+        raise HTTPException(status_code=502, detail=f"Error diagnóstico fuente estatal: {exc}") from exc
