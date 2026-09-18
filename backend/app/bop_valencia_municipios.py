@@ -17,6 +17,7 @@ from . import bop_valencia_patch as _bop_patch
 from .ambito_administrativo import clasificar_ambito_administrativo
 from .database import get_connection
 from .estado_proceso import clasificar_evento_terminal
+from .organismos import resolver_fuente, resolver_organismo
 
 
 def _sin(s: str) -> str:
@@ -255,9 +256,12 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
     resultado = {"modo": "APLICAR" if aplicar else "SOLO_REVISION", "desde": diagnostico["desde"], "hasta": diagnostico["hasta"], "candidatas": len(candidatas), "seguimientos": len(seguimientos), "dias_con_error": diagnostico["dias_con_error"], "nuevos": 0, "existentes": 0, "seguimientos_vinculados": 0, "seguimientos_revision": 0, "seguimientos_sin_cambios": 0, "organismos_creados": 0, "detalle": []}
 
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        cursor.execute("SELECT id FROM fuentes WHERE id=2")
-        if not cursor.fetchone():
-            raise RuntimeError("No existe la fuente BOP Valencia esperada (id=2)")
+        fuente = resolver_fuente(
+            cursor,
+            nombre="Boletín Oficial de la Provincia de Valencia",
+            tipo="BOP",
+        )
+        fuente_id = fuente["id"]
 
         for h in hallazgos:
             if h["clase"] == "SEGUIMIENTO":
@@ -278,11 +282,11 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                 if finaliza:
                     item["estado_nuevo"] = estado_terminal
                 if aplicar:
-                    cursor.execute("SELECT id FROM publicaciones WHERE fuente_id=2 AND referencia=%s LIMIT 1", (h["registro"],))
+                    cursor.execute("SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1", (fuente_id, h["registro"]))
                     pub = cursor.fetchone()
                     publicacion_nueva = pub is None
                     if publicacion_nueva:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at) VALUES (%s,2,%s,'BOP',%s,%s,%s,%s,NOW()) RETURNING id", (proceso["id"], h["registro"], h["titulo"], h["fecha_publicacion"], h["url"], Jsonb({"origen": "BOP_VALENCIA_MUNICIPAL", "clase": "SEGUIMIENTO"})))
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at) VALUES (%s,%s,%s,'BOP',%s,%s,%s,%s,NOW()) RETURNING id", (proceso["id"], fuente_id, h["registro"], h["titulo"], h["fecha_publicacion"], h["url"], Jsonb({"origen": "BOP_VALENCIA_MUNICIPAL", "clase": "SEGUIMIENTO"})))
                         item["publicacion_id"] = cursor.fetchone()["id"]
                     else:
                         item["publicacion_id"] = pub["id"]
@@ -319,12 +323,12 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                 continue
 
             municipio = h["municipio_detectado"]
-            cursor.execute("SELECT id,municipio,nombre FROM organismos WHERE tipo='AYUNTAMIENTO'")
-            org = None
-            for candidato in cursor.fetchall():
-                if _sin(candidato.get("municipio") or "") == _sin(municipio):
-                    org = candidato
-                    break
+            org = resolver_organismo(
+                cursor,
+                tipo="AYUNTAMIENTO",
+                provincia="Valencia",
+                municipio=municipio,
+            )
             visible = h.get("municipio_visible") or _nombre_municipio(municipio)
             if org:
                 organismo_id = org["id"]
@@ -336,7 +340,7 @@ def importar_municipales_bop(*, hasta: date, dias: int = 30, aplicar: bool = Fal
                 cursor.execute("INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at) VALUES (%s,'AYUNTAMIENTO',%s,'Valencia',TRUE,NOW(),NOW()) RETURNING id", (nombre, municipio))
                 organismo_id = cursor.fetchone()["id"]
                 resultado["organismos_creados"] += 1
-            cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,plazas,estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,ambito_administrativo,datos_json,updated_at) VALUES (%s,%s,%s,%s,%s,'EN_CURSO',%s,2,TRUE,'SI',%s,NOW()) RETURNING id", (organismo_id, h["registro"], estable, h["titulo"], _extraer_plazas(h["titulo"]), h["fecha_publicacion"], Jsonb({"url_oficial": h["url"], "bop_registro": h["registro"], "origen": "BOP_VALENCIA_MUNICIPAL"})))
+            cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,plazas,estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,ambito_administrativo,datos_json,updated_at) VALUES (%s,%s,%s,%s,%s,'EN_CURSO',%s,%s,TRUE,'SI',%s,NOW()) RETURNING id", (organismo_id, h["registro"], estable, h["titulo"], _extraer_plazas(h["titulo"]), h["fecha_publicacion"], fuente_id, Jsonb({"url_oficial": h["url"], "bop_registro": h["registro"], "origen": "BOP_VALENCIA_MUNICIPAL"})))
             pid = cursor.fetchone()["id"]
             resultado["nuevos"] += 1
             resultado["detalle"].append({"registro": h["registro"], "clase": "NUEVA_CONVOCATORIA", "estado": "NUEVO", "proceso_id": pid, "municipio": municipio})
