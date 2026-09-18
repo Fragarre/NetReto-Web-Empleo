@@ -107,43 +107,40 @@ def _parse_tarjetas(html: str) -> list[dict]:
     return salida
 
 
-def _params_dia(dia: date, pagina: int) -> dict[str, str]:
-    f = dia.strftime("%d/%m/%Y")
-    p = {
+def _params_intervalo(desde: date, hasta: date) -> dict[str, str]:
+    return {
         "pag_fecha": "intervalo",
-        "fechaDesde": f,
-        "fechaHasta": f,
+        "fechaDesde": desde.strftime("%d/%m/%Y"),
+        "fechaHasta": hasta.strftime("%d/%m/%Y"),
         "pag_sort": "desc",
     }
-    if pagina > 1:
-        p["page"] = str(pagina)
-    return p
 
 
 def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> list[dict]:
+    # El nuevo componente AEM mantiene en sesión los filtros de la búsqueda.
+    # Se realiza una sola búsqueda para todo el intervalo y, a continuación,
+    # las páginas adicionales se solicitan únicamente con page=N, igual que
+    # hace el JavaScript oficial del portal.
+    r = _get(client, RESULTADOS, params=_params_intervalo(desde, hasta))
+    total = _parse_total(BeautifulSoup(r.text, "html.parser"))
+    paginas = max(1, math.ceil(total / TAM_PAGINA)) if total else 1
+    tarjetas = _parse_tarjetas(r.text)
+
+    for pagina in range(2, paginas + 1):
+        rp = _get(client, RESULTADOS, params={"page": str(pagina)})
+        tarjetas.extend(_parse_tarjetas(rp.text))
+
+    referencias_unicas = {x["referencia"] for x in tarjetas}
+    if len(referencias_unicas) != total:
+        raise RuntimeError(
+            f"Listado inconsistente en {desde.isoformat()}..{hasta.isoformat()}: "
+            f"{len(tarjetas)} tarjetas, {len(referencias_unicas)} referencias únicas, total {total}"
+        )
+
     encontrados: dict[int, dict] = {}
-    dia = desde
-    while dia <= hasta:
-        r = _get(client, RESULTADOS, params=_params_dia(dia, 1))
-        total = _parse_total(BeautifulSoup(r.text, "html.parser"))
-        paginas = max(1, math.ceil(total / TAM_PAGINA)) if total else 1
-        tarjetas = _parse_tarjetas(r.text)
-        for pagina in range(2, paginas + 1):
-            # El componente AEM conserva los filtros de la primera petición en
-            # la sesión y para "cargar más" envía únicamente page=N.
-            rp = _get(client, RESULTADOS, params={"page": str(pagina)})
-            tarjetas.extend(_parse_tarjetas(rp.text))
-        referencias_unicas = {x["referencia"] for x in tarjetas}
-        if len(referencias_unicas) != total:
-            raise RuntimeError(
-                f"Listado inconsistente en {dia.isoformat()}: "
-                f"{len(tarjetas)} tarjetas, {len(referencias_unicas)} referencias únicas, total {total}"
-            )
-        for item in tarjetas:
-            if "AUTONÓMICO - COMUNITAT VALENCIANA" in (item.get("ubicacion") or "").upper():
-                item["fecha_publicacion_busqueda"] = dia.isoformat()
-                encontrados[item["referencia"]] = item
-        dia += timedelta(days=1)
+    for item in tarjetas:
+        if "AUTONÓMICO - COMUNITAT VALENCIANA" in (item.get("ubicacion") or "").upper():
+            encontrados[item["referencia"]] = item
     return [encontrados[k] for k in sorted(encontrados)]
 
 
