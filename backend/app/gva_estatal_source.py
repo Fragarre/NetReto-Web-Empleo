@@ -216,7 +216,7 @@ def parsear_detalle(referencia: int, html: str) -> dict:
 
 
 def obtener_detalle(client: httpx.Client, referencia: int) -> dict:
-    r = _get(client, DETALLE, params={"selectorget": referencia})
+    r = _get(client, DETALLE, params={"selectorServicio": "bolsa_empleo", "selectorget": referencia})
     return parsear_detalle(referencia, r.text)
 
 
