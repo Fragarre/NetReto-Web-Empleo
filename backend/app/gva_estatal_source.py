@@ -126,13 +126,9 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
     while dia <= hasta:
         r = _get(client, RESULTADOS, params=_params_dia(dia, 1))
         total = _parse_total(BeautifulSoup(r.text, "html.parser"))
-        paginas = max(1, math.ceil(total / TAM_PAGINA)) if total else 1
         tarjetas = _parse_tarjetas(r.text)
-        for pagina in range(2, paginas + 1):
-            rp = _get(client, RESULTADOS, params=_params_dia(dia, pagina))
-            tarjetas.extend(_parse_tarjetas(rp.text))
         if len({x["referencia"] for x in tarjetas}) != total:
-            raise RuntimeError(f"Paginación incompleta en {dia.isoformat()}: {len(tarjetas)}/{total}")
+            raise RuntimeError(f"Listado incompleto en {dia.isoformat()}: {len(tarjetas)}/{total}")
         for item in tarjetas:
             if "AUTONÓMICO - COMUNITAT VALENCIANA" in (item.get("ubicacion") or "").upper():
                 item["fecha_publicacion_busqueda"] = dia.isoformat()
