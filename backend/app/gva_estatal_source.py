@@ -146,7 +146,7 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
 
 def _extraer_via(texto: str) -> str | None:
     m = re.search(
-        r"Tipo de v[ií]a\\s+(.+?)(?=\\s+(?:[ÓO]rgano convocante|Plazas|Titulaci[oó]n|Requisitos|Observaciones|M[aá]s informaci[oó]n|Plazo de presentaci[oó]n)\\b)",
+        r"Tipo de v[ií]a\s+(.+?)(?=\s+(?:[ÓO]rgano convocante|Plazas|Titulaci[oó]n|Requisitos|Observaciones|M[aá]s informaci[oó]n|Plazo de presentaci[oó]n)\b)",
         texto,
         re.I,
     )
