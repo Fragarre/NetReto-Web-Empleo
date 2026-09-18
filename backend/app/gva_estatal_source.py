@@ -126,7 +126,13 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
     while dia <= hasta:
         r = _get(client, RESULTADOS, params=_params_dia(dia, 1))
         total = _parse_total(BeautifulSoup(r.text, "html.parser"))
+        paginas = max(1, math.ceil(total / TAM_PAGINA)) if total else 1
         tarjetas = _parse_tarjetas(r.text)
+        for pagina in range(2, paginas + 1):
+            # El componente AEM conserva los filtros de la primera petición en
+            # la sesión y para "cargar más" envía únicamente page=N.
+            rp = _get(client, RESULTADOS, params={"page": str(pagina)})
+            tarjetas.extend(_parse_tarjetas(rp.text))
         referencias_unicas = {x["referencia"] for x in tarjetas}
         if len(referencias_unicas) != total:
             raise RuntimeError(
