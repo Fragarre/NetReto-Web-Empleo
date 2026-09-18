@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from psycopg.rows import dict_row
 
 from app.organismos import resolver_fuente, resolver_organismo
 
@@ -24,7 +23,7 @@ def test_resolver_fuente_por_identidad_sin_id_historico():
     cursor = CursorFalso([
         {
             "id": 27,
-            "organismo_id": None,
+            "organismo_id": 2,
             "nombre": "Boletín Oficial de la Provincia de Valencia",
             "tipo": "BOP",
             "url": "https://ejemplo.invalid",
@@ -39,16 +38,40 @@ def test_resolver_fuente_por_identidad_sin_id_historico():
     )
     assert fuente["id"] == 27
     assert "id =" not in cursor.sql.lower()
+    assert "organismo_id" not in cursor.sql.lower().split("where", 1)[1]
     assert cursor.params[:2] == (
         "Boletín Oficial de la Provincia de Valencia",
         "BOP",
     )
 
 
+def test_resolver_fuente_filtra_organismo_si_se_especifica():
+    cursor = CursorFalso([
+        {
+            "id": 27,
+            "organismo_id": 2,
+            "nombre": "Boletín Oficial de la Provincia de Valencia",
+            "tipo": "BOP",
+            "url": "https://ejemplo.invalid",
+            "prioridad": 10,
+            "activa": True,
+        }
+    ])
+    fuente = resolver_fuente(
+        cursor,
+        nombre="Boletín Oficial de la Provincia de Valencia",
+        tipo="BOP",
+        organismo_id=2,
+    )
+    assert fuente["id"] == 27
+    assert "organismo_id = %s" in cursor.sql
+    assert cursor.params[-1] == 2
+
+
 def test_resolver_fuente_rechaza_ambiguedad():
     cursor = CursorFalso([
-        {"id": 2, "organismo_id": None, "nombre": "BOP", "tipo": "BOP", "url": "a", "prioridad": 1, "activa": True},
-        {"id": 8, "organismo_id": None, "nombre": "BOP", "tipo": "BOP", "url": "b", "prioridad": 1, "activa": True},
+        {"id": 2, "organismo_id": 2, "nombre": "BOP", "tipo": "BOP", "url": "a", "prioridad": 1, "activa": True},
+        {"id": 8, "organismo_id": 8, "nombre": "BOP", "tipo": "BOP", "url": "b", "prioridad": 1, "activa": True},
     ])
     with pytest.raises(RuntimeError, match="ambigua"):
         resolver_fuente(cursor, nombre="BOP", tipo="BOP")
