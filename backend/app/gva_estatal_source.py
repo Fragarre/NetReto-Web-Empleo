@@ -127,8 +127,12 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
         r = _get(client, RESULTADOS, params=_params_dia(dia, 1))
         total = _parse_total(BeautifulSoup(r.text, "html.parser"))
         tarjetas = _parse_tarjetas(r.text)
-        if len({x["referencia"] for x in tarjetas}) != total:
-            raise RuntimeError(f"Listado incompleto en {dia.isoformat()}: {len(tarjetas)}/{total}")
+        referencias_unicas = {x["referencia"] for x in tarjetas}
+        if len(referencias_unicas) != total:
+            raise RuntimeError(
+                f"Listado inconsistente en {dia.isoformat()}: "
+                f"{len(tarjetas)} tarjetas, {len(referencias_unicas)} referencias únicas, total {total}"
+            )
         for item in tarjetas:
             if "AUTONÓMICO - COMUNITAT VALENCIANA" in (item.get("ubicacion") or "").upper():
                 item["fecha_publicacion_busqueda"] = dia.isoformat()
