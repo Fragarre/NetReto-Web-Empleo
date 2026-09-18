@@ -9,7 +9,7 @@ from psycopg.types.json import Jsonb
 from .database import get_connection
 from .gva_estatal_import import LEGACY_ALIASES
 
-FUENTE_GVA_URL_ESTATAL = "https://administracion.gob.es/pagFront/ofertasempleopublico/resultadosEmpleo.htm"
+FUENTE_GVA_URL_ESTATAL = "https://administracion.gob.es/empleopublico/resultadosEmpleo"
 DOGV_HOST = "dogv.gva.es"
 
 
