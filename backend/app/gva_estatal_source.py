@@ -11,10 +11,13 @@ import httpx
 from bs4 import BeautifulSoup
 
 BASE = "https://administracion.gob.es"
-RESULTADOS = f"{BASE}/pagFront/ofertasempleopublico/resultadosEmpleo.htm"
-DETALLE = f"{BASE}/pagFront/ofertasempleopublico/detalleEmpleo.htm"
+RESULTADOS = (
+    f"{BASE}/content/pag-home/es/empleopublico/resultadosEmpleo/"
+    "jcr:content/root/container/containerSpace/pag_front_formulario.list.html"
+)
+DETALLE = f"{BASE}/empleopublico/resultadosEmpleo/detalle-empleo"
 UA = "NetReto-Empleo/1.0 (https://netexamenes.com)"
-TAM_PAGINA = 100
+TAM_PAGINA = 10
 
 VIAS_INCLUIDAS = {"INGRESO_LIBRE", "INTERINIDAD", "CONTRATACION_FIJA"}
 CODIGOS_ADMIN = ("A1-01", "A2-01", "A2-05", "C1-01", "C1-07", "C2-01")
@@ -74,7 +77,7 @@ def _get(client: httpx.Client, url: str, *, params: dict | None = None) -> httpx
 
 def _parse_total(soup: BeautifulSoup) -> int:
     texto = _limpio(soup.get_text(" ", strip=True))
-    m = re.search(r"Total resultados:\s*([\d.]+)", texto, re.I)
+    m = re.search(r"Total(?: de)? resultados:\\s*([\\d.]+)", texto, re.I)
     if not m:
         raise ValueError("No se localiza el total de resultados")
     return int(m.group(1).replace(".", ""))
@@ -83,17 +86,17 @@ def _parse_total(soup: BeautifulSoup) -> int:
 def _parse_tarjetas(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     salida: list[dict] = []
-    for div in soup.select("div.resultado_empleo"):
-        enlace = div.find("a", href=re.compile(r"idConvocatoria=\d+"))
+    for div in soup.select(".dnt-item, .pag-card-convo"):
+        enlace = div.find("a", href=re.compile(r"selectorget=\\d+"))
         if not enlace:
             continue
         href = enlace.get("href") or ""
-        m = re.search(r"idConvocatoria=(\d+)", href)
+        m = re.search(r"selectorget=(\\d+)", href)
         if not m:
             continue
         texto = _limpio(div.get_text(" ", strip=True))
-        m_ubic = re.search(r"Ubicaci[oó]n:\s*(.+?)(?=\s+[ÓO]rgano convocante:)", texto, re.I)
-        m_org = re.search(r"[ÓO]rgano convocante:\s*(.+)$", texto, re.I)
+        m_ubic = re.search(r"Ubicaci[oó]n:\\s*(.+?)(?=\\s+[ÓO]rgano convocante:)", texto, re.I)
+        m_org = re.search(r"[ÓO]rgano convocante:\\s*(.+?)(?=\\s+Plazas:|$)", texto, re.I)
         salida.append({
             "referencia": int(m.group(1)),
             "titulo": _limpio(enlace.get_text(" ", strip=True)),
@@ -107,17 +110,13 @@ def _parse_tarjetas(html: str) -> list[dict]:
 def _params_dia(dia: date, pagina: int) -> dict[str, str]:
     f = dia.strftime("%d/%m/%Y")
     p = {
-        "tipoBusqueda": "CONVOCATORIAS",
-        "buscar": "true",
-        "tipoFechas": "intervaloFechas",
-        "fechaPublicacionDesde": f,
-        "fechaPublicacionHasta": f,
-        "orders": "id",
-        "sort": "desc",
-        "tam": str(TAM_PAGINA),
+        "pag_fecha": "intervalo",
+        "fechaDesde": f,
+        "fechaHasta": f,
+        "pag_sort": "desc",
     }
     if pagina > 1:
-        p["desde"] = str(pagina)
+        p["page"] = str(pagina)
     return p
 
 
@@ -214,7 +213,7 @@ def parsear_detalle(referencia: int, html: str) -> dict:
 
 
 def obtener_detalle(client: httpx.Client, referencia: int) -> dict:
-    r = _get(client, DETALLE, params={"idConvocatoria": referencia, "idioma": "es"})
+    r = _get(client, DETALLE, params={"selectorget": referencia})
     return parsear_detalle(referencia, r.text)
 
 
