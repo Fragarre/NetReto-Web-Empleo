@@ -77,7 +77,7 @@ def _get(client: httpx.Client, url: str, *, params: dict | None = None) -> httpx
 
 def _parse_total(soup: BeautifulSoup) -> int:
     texto = _limpio(soup.get_text(" ", strip=True))
-    m = re.search(r"Total(?: de)? resultados:\\s*([\\d.]+)", texto, re.I)
+    m = re.search(r"Total(?: de)? resultados:\s*([\d.]+)", texto, re.I)
     if not m:
         raise ValueError("No se localiza el total de resultados")
     return int(m.group(1).replace(".", ""))
@@ -87,16 +87,16 @@ def _parse_tarjetas(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     salida: list[dict] = []
     for div in soup.select(".dnt-item, .pag-card-convo"):
-        enlace = div.find("a", href=re.compile(r"selectorget=\\d+"))
+        enlace = div.find("a", href=re.compile(r"selectorget=\d+"))
         if not enlace:
             continue
         href = enlace.get("href") or ""
-        m = re.search(r"selectorget=(\\d+)", href)
+        m = re.search(r"selectorget=(\d+)", href)
         if not m:
             continue
         texto = _limpio(div.get_text(" ", strip=True))
-        m_ubic = re.search(r"Ubicaci[oó]n:\\s*(.+?)(?=\\s+[ÓO]rgano convocante:)", texto, re.I)
-        m_org = re.search(r"[ÓO]rgano convocante:\\s*(.+?)(?=\\s+Plazas:|$)", texto, re.I)
+        m_ubic = re.search(r"Ubicaci[oó]n:\s*(.+?)(?=\s+[ÓO]rgano convocante:)", texto, re.I)
+        m_org = re.search(r"[ÓO]rgano convocante:\s*(.+?)(?=\s+Plazas:|$)", texto, re.I)
         salida.append({
             "referencia": int(m.group(1)),
             "titulo": _limpio(enlace.get_text(" ", strip=True)),
