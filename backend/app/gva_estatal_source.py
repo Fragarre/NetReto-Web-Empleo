@@ -119,7 +119,7 @@ def _params_intervalo(desde: date, hasta: date) -> dict[str, str]:
 def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> list[dict]:
     # El nuevo componente AEM mantiene en sesión los filtros de la búsqueda.
     # Se realiza una sola búsqueda para todo el intervalo y, a continuación,
-    # las páginas adicionales se solicitan únicamente con page=N, igual que
+    # las páginas adicionales se solicitan únicamente con p=N, igual que
     # hace el JavaScript oficial del portal.
     r = _get(client, RESULTADOS, params=_params_intervalo(desde, hasta))
     total = _parse_total(BeautifulSoup(r.text, "html.parser"))
@@ -127,7 +127,7 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
     tarjetas = _parse_tarjetas(r.text)
 
     for pagina in range(2, paginas + 1):
-        rp = _get(client, RESULTADOS, params={"page": str(pagina)})
+        rp = _get(client, RESULTADOS, params={"p": str(pagina)})
         tarjetas.extend(_parse_tarjetas(rp.text))
 
     referencias_unicas = {x["referencia"] for x in tarjetas}
