@@ -9,14 +9,14 @@ def test_fuente_ok():
 
 def test_fuente_sin_novedades():
     salida = _ejecutar_fuente(lambda: {"descubiertos": 0, "errores": []})
-    assert salida["estado"] == "SIN_NOVEDADES"
+    assert salida[1]["estado"] == "SIN_NOVEDADES"
 
 
 def test_fuente_degradada():
     salida = _ejecutar_fuente(
         lambda: {"descubiertos": 1, "dias_con_error": 1, "errores": [{"fecha": "2026-09-18"}]},
     )
-    assert salida["estado"] == "DEGRADADA"
+    assert salida[1]["estado"] == "DEGRADADA"
 
 
 def test_fallo_queda_aislado_y_permite_continuar():
