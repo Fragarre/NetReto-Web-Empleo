@@ -33,19 +33,14 @@ def _estado_fuente(valor: Any) -> str:
     return "OK"
 
 
-def _ejecutar_fuente(nombre: str, funcion: Callable[[], Any]) -> dict[str, Any]:
-    """Aísla una fuente: su fallo se informa y no aborta las siguientes."""
+def _ejecutar_fuente(funcion: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
+    """Aísla una fuente sin alterar el payload histórico cuando tiene éxito."""
     try:
         valor = funcion()
-        return {
-            "estado": _estado_fuente(valor),
-            "resultado": valor,
-        }
+        return valor, {"estado": _estado_fuente(valor)}
     except Exception as exc:
-        return {
-            "estado": "ERROR",
-            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
-        }
+        error = f"{type(exc).__name__}: {str(exc)[:500]}"
+        return {"error": error}, {"estado": "ERROR", "error": error}
 
 
 def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_solape: int = DIAS_SOLAPE_DEFECTO) -> dict[str, Any]:
@@ -74,7 +69,13 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         "hasta": fecha_hoy.isoformat(),
         "dias_solape": dias_solape,
         "fuentes": {},
+        "estado_fuentes": {},
     }
+
+    def registrar(nombre: str, funcion: Callable[[], Any]) -> None:
+        valor, estado = _ejecutar_fuente(funcion)
+        resultado["fuentes"][nombre] = valor
+        resultado["estado_fuentes"][nombre] = estado
 
     def ejecutar_bop_diputacion() -> Any:
         if aplicar:
@@ -89,14 +90,11 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
                 "resultado": diagnosticar_bop(client, fecha=fecha_hoy.isoformat()),
             }
 
-    resultado["fuentes"]["bop_valencia_diputacion"] = _ejecutar_fuente(
-        "bop_valencia_diputacion",
-        ejecutar_bop_diputacion,
-    )
+    registrar("bop_valencia_diputacion", ejecutar_bop_diputacion)
 
     # El BOP municipal se mantiene antes que BOE: en modo aplicado, BOE puede
     # vincular con bases municipales detectadas en esta misma ejecución.
-    resultado["fuentes"]["bop_valencia_municipios"] = _ejecutar_fuente(
+    registrar(
         "bop_valencia_municipios",
         lambda: importar_municipales_bop(
             hasta=fecha_hoy,
@@ -105,7 +103,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         ),
     )
 
-    resultado["fuentes"]["boe_local"] = _ejecutar_fuente(
+    registrar(
         "boe_local",
         lambda: previsualizar_importacion_boe_local(
             hasta=fecha_hoy,
@@ -114,7 +112,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         ),
     )
 
-    resultado["fuentes"]["gva"] = _ejecutar_fuente(
+    registrar(
         "gva",
         lambda: importar_gva_estatal(
             desde=desde,
@@ -123,7 +121,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         ),
     )
 
-    estados = [fuente["estado"] for fuente in resultado["fuentes"].values()]
+    estados = [fuente["estado"] for fuente in resultado["estado_fuentes"].values()]
     resultado["resumen_fuentes"] = {
         "total": len(estados),
         "ok": sum(e == "OK" for e in estados),
