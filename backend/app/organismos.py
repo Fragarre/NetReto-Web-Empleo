@@ -3,8 +3,6 @@ from __future__ import annotations
 import unicodedata
 from typing import Any
 
-from psycopg.rows import dict_row
-
 from .database import get_connection
 
 
@@ -24,12 +22,14 @@ def resolver_fuente(
     organismo_id: int | None = None,
     solo_activa: bool = True,
 ) -> dict[str, Any]:
-    """Resuelve una fuente por identidad funcional, nunca por un ID histórico."""
+    """Resuelve una fuente por identidad funcional, nunca por un ID histórico.
+
+    Si organismo_id no se especifica, no se filtra por organismo. Una identidad
+    funcional que produzca más de una fila se considera ambigua y no se enlaza.
+    """
     conditions = ["LOWER(TRIM(nombre)) = LOWER(TRIM(%s))", "UPPER(tipo) = UPPER(%s)"]
     params: list[Any] = [nombre, tipo]
-    if organismo_id is None:
-        conditions.append("organismo_id IS NULL")
-    else:
+    if organismo_id is not None:
         conditions.append("organismo_id = %s")
         params.append(organismo_id)
     if solo_activa:
