@@ -60,6 +60,7 @@ def main() -> int:
     esperado = {
         "insertar": 3,
         "enlazar_metadatos": 4,
+        "enlazar_ficha_gva": 0,
         "publicaciones": 7,
         "sin_cambios": 0,
         "revision": 0,
@@ -82,6 +83,7 @@ def main() -> int:
     esperado2 = {
         "insertar": 0,
         "enlazar_metadatos": 0,
+        "enlazar_ficha_gva": 0,
         "publicaciones": 0,
         "sin_cambios": 7,
         "revision": 0,

@@ -36,6 +36,18 @@ jobs:
       - name: Compilar módulos GVA estatales
         run: python -m py_compile app/gva_estatal_source.py app/gva_estatal_import.py app/gva_estatal_persist.py app/gva_estatal_service.py
 
+      - name: Validar paginación real del listado sin escritura
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          from datetime import date
+          from app.gva_estatal_source import nuevo_cliente, descubrir_referencias
+          with nuevo_cliente() as client:
+              items = descubrir_referencias(client, date(2026, 9, 11), date(2026, 9, 18))
+          refs = [x["referencia"] for x in items]
+          assert len(refs) == len(set(refs)), f"Referencias duplicadas: {len(refs)} != {len(set(refs))}"
+          print("VALIDACION_PAGINACION_OK", len(refs))
+          PY
+
       - name: Validar integración sin escritura en BD
         run: PYTHONPATH=. python scripts/validar_gva_estatal_import.py
 
