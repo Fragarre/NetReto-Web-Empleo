@@ -145,7 +145,12 @@ def descubrir_referencias(client: httpx.Client, desde: date, hasta: date) -> lis
 
 
 def _extraer_via(texto: str) -> str | None:
-    n = _sin(texto)
+    m = re.search(
+        r"Tipo de v[ií]a\\s+(.+?)(?=\\s+(?:Plazas|Titulaci[oó]n|Requisitos|Observaciones|M[aá]s informaci[oó]n|Plazo de presentaci[oó]n)\\b)",
+        texto,
+        re.I,
+    )
+    n = _sin(m.group(1) if m else "")
     if "promocion interna" in n:
         return "PROMOCION_INTERNA"
     if "ingreso libre" in n or "acceso libre" in n:
