@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -88,6 +88,77 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
     for anuncio in anuncios:
         unicos.setdefault(anuncio["id_anuncio"], anuncio)
     return {"numero_bop": numero, "fecha_publicacion": fecha, "anuncios": list(unicos.values())}
+
+
+
+def _boletines_disponibles(html: str) -> list[dict[str, Any]]:
+    """Extrae fecha, número y componente JSF de «Boletines anteriores»."""
+    import re
+    soup = BeautifulSoup(html, "html.parser")
+    meses = {
+        "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+        "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10,
+        "noviembre": 11, "diciembre": 12,
+    }
+    encontrados = {}
+    patron = re.compile(r"N[º°]\s*(\d+).*?(\d{2})\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)\s+(\d{4})")
+    for nodo in soup.find_all(id=True):
+        m = patron.search(_texto(nodo))
+        if not m:
+            continue
+        mes = meses.get(m.group(3).lower())
+        if not mes:
+            continue
+        item = {
+            "numero": m.group(1),
+            "fecha": date(int(m.group(4)), mes, int(m.group(2))),
+            "source": nodo.get("id"),
+        }
+        clave = (item["numero"], item["fecha"])
+        previo = encontrados.get(clave)
+        if previo is None or item["source"].count(":") > previo["source"].count(":"):
+            encontrados[clave] = item
+    return sorted(encontrados.values(), key=lambda x: x["fecha"], reverse=True)
+
+
+def _view_state(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    nodo = soup.find("input", attrs={"name": "javax.faces.ViewState"})
+    return nodo.get("value") if nodo else None
+
+
+def _cargar_boletin_anterior(client: httpx.Client, html_inicial: str, source: str) -> str:
+    """Reproduce la acción JSF/PrimeFaces observada en el navegador."""
+    import xml.etree.ElementTree as ET
+    view_state = _view_state(html_inicial)
+    if not view_state:
+        raise RuntimeError("El portal no expone javax.faces.ViewState")
+    formulario = "busquedaBoletinesForm"
+    datos = {
+        "javax.faces.partial.ajax": "true",
+        "javax.faces.source": source,
+        "javax.faces.partial.execute": "@all",
+        "javax.faces.partial.render": formulario,
+        source: source,
+        formulario: formulario,
+        "javax.faces.ViewState": view_state,
+    }
+    respuesta = client.post(
+        PORTAL,
+        data=datos,
+        headers={
+            "Accept": "application/xml, text/xml, */*; q=0.01",
+            "Faces-Request": "partial/ajax",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": PORTAL,
+        },
+    )
+    respuesta.raise_for_status()
+    raiz = ET.fromstring(respuesta.text)
+    for update in raiz.findall(".//update"):
+        if update.get("id") == formulario and update.text:
+            return update.text
+    raise RuntimeError("La respuesta JSF no contiene la actualización del formulario")
 
 
 def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
