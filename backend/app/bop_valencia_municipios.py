@@ -171,7 +171,7 @@ def _familia_perfil(titulo: str) -> str | None:
     n = _sin(titulo)
     if "auxiliar administr" in n:
         return "AUXILIAR_ADMINISTRATIVO"
-    if any(x in n for x in ("tecnic d'administracio general", "tecnico de administracion general", "tecnica de administracion general")):
+    if any(x in n for x in ("tecnic d'administracio general", "tecnico de administracion general", "tecnica de administracion general", "tecnico/a de administracion general")):
         return "TAG"
     if "administratiu" in n or "administrativo" in n or "administrativa" in n:
         return "ADMINISTRATIVO"
