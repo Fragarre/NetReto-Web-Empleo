@@ -41,7 +41,20 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
             mid = re.search(r"idAnuncio=(\d+)", href)
             if not mid:
                 continue
-            titulo = _texto(enlace)
+            # El <a> de descarga solo contiene "ui-button"; el título es texto
+            # hermano dentro del mismo contenedor del anuncio.
+            contenedor = enlace.parent
+            titulo = ""
+            while contenedor is not None:
+                texto_contenedor = _texto(contenedor)
+                texto_enlace = _texto(enlace)
+                if texto_contenedor and texto_contenedor != texto_enlace:
+                    titulo = texto_contenedor
+                    if texto_enlace:
+                        titulo = titulo.replace(texto_enlace, "", 1).strip()
+                    if titulo:
+                        break
+                contenedor = contenedor.parent
             if not titulo:
                 continue
             anuncios.append({
