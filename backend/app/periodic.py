@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import traceback
 from typing import Any, Callable
 
 import httpx
@@ -41,7 +42,8 @@ def _ejecutar_fuente(funcion: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
         return valor, {"estado": _estado_fuente(valor)}
     except Exception as exc:
         error = f"{type(exc).__name__}: {str(exc)[:500]}"
-        return {"error": error}, {"estado": "ERROR", "error": error}
+        traza = traceback.format_exc()
+        return {"error": error, "traceback": traza}, {"estado": "ERROR", "error": error, "traceback": traza}
 
 
 def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_solape: int = DIAS_SOLAPE_DEFECTO) -> dict[str, Any]:
