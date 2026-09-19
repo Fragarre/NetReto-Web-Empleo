@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+import unicodedata
+from collections import Counter
 from datetime import date, timedelta
 from typing import Any
 from xml.sax.saxutils import escape
@@ -62,6 +65,68 @@ def _normalizar(registro: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _sin(texto: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", (texto or "").lower())
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _clasificar_publicacion(registro: dict[str, Any]) -> str:
+    texto = _sin(" ".join(
+        str(registro.get(k) or "")
+        for k in ("extracto", "organismo", "denominacion")
+    ))
+
+    internos = (
+        "libre designacion", "comision de servicios", "concurso de traslados",
+        "concurso especifico de meritos", "provision de puesto",
+        "promocion interna", "cesion de la bolsa", "convenio de colaboracion",
+    )
+    if any(x in texto for x in internos):
+        return "EXCLUIDO_INTERNO"
+
+    bolsas = (
+        "bolsa de empleo", "bolsa de trabajo", "borsa d'ocupacio",
+        "borsa de treball", "funcionario interino", "funcionaria interina",
+    )
+    if any(x in texto for x in bolsas):
+        return "BOLSA_TEMPORAL"
+
+    seguimiento = (
+        "relacion provisional", "relacion definitiva", "admitidos", "admitidas",
+        "excluidos", "excluidas", "tribunal", "primer ejercicio",
+        "fecha del ejercicio", "resultados", "nombramiento",
+        "propuesta de nombramiento", "correccion de errores",
+        "modificacion", "resolucion de recursos", "acumulacion de plazas",
+    )
+    if any(x in texto for x in seguimiento):
+        return "SEGUIMIENTO"
+
+    bases = (
+        "aprobacion de las bases", "bases de la convocatoria",
+        "bases y la convocatoria", "bases reguladoras del procedimiento selectivo",
+        "convocatoria para la provision", "convocatoria para cubrir",
+        "convocatoria de una plaza", "convocatoria de plazas",
+    )
+    if any(x in texto for x in bases):
+        return "NUEVA_CONVOCATORIA"
+
+    ruido = (
+        "presupuesto", "modificacion presupuestaria", "cuenta general",
+        "ordenanza", "subvencion", "tribut", "recaudacion", "padron",
+        "exposicion publica", "oferta de empleo publico",
+    )
+    if any(x in texto for x in ruido):
+        return "RUIDO"
+
+    return "REVISION"
+
+
+def _es_candidato_empleo(registro: dict[str, Any]) -> bool:
+    return registro.get("ambito_administrativo") == "SI"
+
 def consultar_bop_alicante(
     *,
     dias_solape: int = 7,
@@ -80,6 +145,9 @@ def consultar_bop_alicante(
         "descubiertos": 0,
         "administrativos": 0,
         "revision": 0,
+        "resumen_clases": {},
+        "candidatas_nuevas": 0,
+        "seguimientos": 0,
         "errores": [],
         "detalle": [],
     }
@@ -102,9 +170,17 @@ def consultar_bop_alicante(
         resultado["errores"].append("Respuesta BOP Alicante sin bop.registro[]")
         return resultado
 
-    detalle = [_normalizar(r) for r in registros[:max_items] if isinstance(r, dict)]
-    resultado["descubiertos"] = len(detalle)
-    resultado["administrativos"] = sum(1 for r in detalle if r["ambito_administrativo"] == "SI")
-    resultado["revision"] = sum(1 for r in detalle if r["ambito_administrativo"] == "REVISION")
-    resultado["detalle"] = detalle
+    normalizados = [_normalizar(r) for r in registros[:max_items] if isinstance(r, dict)]
+    administrativos = [r for r in normalizados if _es_candidato_empleo(r)]
+    for r in administrativos:
+        r["clase"] = _clasificar_publicacion(r)
+
+    conteo = Counter(r["clase"] for r in administrativos)
+    resultado["descubiertos"] = len(normalizados)
+    resultado["administrativos"] = len(administrativos)
+    resultado["revision"] = sum(1 for r in administrativos if r["clase"] == "REVISION")
+    resultado["resumen_clases"] = dict(sorted(conteo.items()))
+    resultado["candidatas_nuevas"] = conteo.get("NUEVA_CONVOCATORIA", 0)
+    resultado["seguimientos"] = conteo.get("SEGUIMIENTO", 0)
+    resultado["detalle"] = administrativos
     return resultado
