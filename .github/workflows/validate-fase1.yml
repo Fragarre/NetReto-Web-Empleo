@@ -3,7 +3,7 @@ name: Validar Fase 1 Empleo
 on:
   push:
     branches:
-      - feature/empleo-fase1-aislamiento-fuentes
+      - feature/empleo-fase1-aislamiento-fuentes\n      - feature/empleo-fase2-boe-local
   workflow_dispatch:
 
 jobs:
@@ -19,4 +19,4 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt pytest
-      - run: PYTHONPATH=. pytest tests/test_periodic_isolation.py tests/test_identidad_fuentes_organismos.py -q
+      - run: PYTHONPATH=. pytest tests/test_periodic_isolation.py tests/test_identidad_fuentes_organismos.py tests/test_boe_local_fase2.py -q
