@@ -206,7 +206,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                 })
                 continue
 
-            organismo = _buscar_organismo(organismos, convocatoria.get("entidad"))
+            organismo = _buscar_organismo(organismos, convocatoria.get("entidad"), provincia)
             candidatos = []
             if organismo:
                 bases = convocatoria.get("bases_bop") or {}
@@ -284,10 +284,10 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                     cursor.execute(
                         """
                         INSERT INTO organismos (nombre,tipo,municipio,provincia,activo,created_at,updated_at)
-                        VALUES (%s,%s,%s,'Valencia',TRUE,NOW(),NOW())
+                        VALUES (%s,%s,%s,%s,TRUE,NOW(),NOW())
                         RETURNING id,nombre,tipo,provincia,municipio
                         """,
-                        (nombre, tipo, municipio),
+                        (nombre, tipo, municipio, provincia),
                     )
                     organismo = cursor.fetchone()
                     organismos.append(organismo)
