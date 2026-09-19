@@ -10,10 +10,14 @@ class CursorFalso:
         self.rows = rows
         self.sql = None
         self.params = None
+        self.description = None
 
     def execute(self, sql, params=()):
         self.sql = sql
         self.params = params
+        select = sql.split("FROM", 1)[0].replace("SELECT", "", 1)
+        nombres = [campo.strip().split()[-1] for campo in select.split(",")]
+        self.description = [type("Col", (), {"name": nombre})() for nombre in nombres]
 
     def fetchall(self):
         return self.rows
@@ -114,4 +118,17 @@ def test_resolver_organismo_sin_coincidencia_no_inventa():
         provincia="Castellón",
         municipio="Segorbe",
     ) is None
-\n\ndef test_resolver_fuente_acepta_fila_psycopg_posicional():\n    cursor = CursorFalso([(27, 2, "Boletín Oficial de la Provincia de Valencia", "BOP", "https://ejemplo.invalid", 10, True)])\n    fuente = resolver_fuente(cursor, nombre="Boletín Oficial de la Provincia de Valencia", tipo="BOP", organismo_id=2)\n    assert fuente["id"] == 27\n    assert fuente["organismo_id"] == 2\n\n\ndef test_resolver_organismo_acepta_fila_psycopg_posicional():\n    cursor = CursorFalso([(4, "Diputación Provincial de Valencia", "DIPUTACION", "Valencia", None, True)])\n    organismo = resolver_organismo(cursor, tipo="DIPUTACION", provincia="Valencia", nombre="Diputación Provincial de Valencia")\n    assert organismo is not None\n    assert organismo["id"] == 4\n
+
+
+def test_resolver_fuente_acepta_fila_psycopg_posicional():
+    cursor = CursorFalso([(27, 2, "Boletín Oficial de la Provincia de Valencia", "BOP", "https://ejemplo.invalid", 10, True)])
+    fuente = resolver_fuente(cursor, nombre="Boletín Oficial de la Provincia de Valencia", tipo="BOP", organismo_id=2)
+    assert fuente["id"] == 27
+    assert fuente["organismo_id"] == 2
+
+
+def test_resolver_organismo_acepta_fila_psycopg_posicional():
+    cursor = CursorFalso([(4, "Diputación Provincial de Valencia", "DIPUTACION", "Valencia", None, True)])
+    organismo = resolver_organismo(cursor, tipo="DIPUTACION", provincia="Valencia", nombre="Diputación Provincial de Valencia")
+    assert organismo is not None
+    assert organismo["id"] == 4
