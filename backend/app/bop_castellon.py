@@ -5,9 +5,12 @@ from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup
+from psycopg.rows import dict_row
 
 from .ambito_administrativo import clasificar_ambito_administrativo
 from .bop_valencia_municipios import _clasificar_anuncio
+from .bop_alicante import seleccionar_proceso_seguimiento
+from .database import get_connection
 
 PORTAL = "https://bop.dipcas.es/PortalBOP/"
 DESCARGA = "https://bop.dipcas.es/PortalBOP/api/descargarAnuncio"
@@ -255,3 +258,141 @@ def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = N
     resultado["detalle"] = candidatos
     return resultado
 
+
+
+def _fecha_bop(valor: str | None) -> date | None:
+    if not valor:
+        return None
+    for formato in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return (
+                date.fromisoformat(valor)
+                if formato == "%Y-%m-%d"
+                else datetime.strptime(valor, formato).date()
+            )
+        except ValueError:
+            pass
+    return None
+
+
+def _municipio_organismo(organismo: str | None) -> str:
+    """Obtiene el municipio de las cabeceras del sumario sin consultar BD."""
+    import re
+
+    texto = " ".join((organismo or "").split()).strip()
+    patrones = (
+        r"^AJUNTAMENT\s+D['’](.+)$",
+        r"^AJUNTAMENT\s+DE\s+(.+)$",
+        r"^AYUNTAMIENTO\s+D['’](.+)$",
+        r"^AYUNTAMIENTO\s+DE\s+(.+)$",
+    )
+    for patron in patrones:
+        m = re.match(patron, texto, re.I)
+        if m:
+            return m.group(1).strip()
+    return texto
+
+
+def preparar_importacion_bop_castellon(
+    *,
+    desde: date | None = None,
+    hasta: date | None = None,
+) -> dict[str, Any]:
+    """Prepara la persistencia con lecturas de BD; nunca escribe."""
+    revision = consultar_bop_castellon(desde=desde, hasta=hasta)
+    resultado: dict[str, Any] = {
+        "modo": "SOLO_REVISION_BD",
+        "fuente": revision["fuente"],
+        "desde": revision["desde"],
+        "hasta": revision["hasta"],
+        "nuevas": 0,
+        "existentes": 0,
+        "seguimientos_vinculados": 0,
+        "seguimientos_revision": 0,
+        "excluidos": 0,
+        "errores": list(revision["errores"]),
+        "detalle": [],
+    }
+    if resultado["errores"]:
+        return resultado
+
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        for hallazgo in revision["detalle"]:
+            clase = hallazgo["clase"]
+            if clase not in ("NUEVA_CONVOCATORIA", "SEGUIMIENTO"):
+                resultado["excluidos"] += 1
+                continue
+
+            if clase == "NUEVA_CONVOCATORIA":
+                cursor.execute(
+                    "SELECT id FROM procesos WHERE identificador_estable=%s",
+                    (hallazgo["referencia"],),
+                )
+                existente = cursor.fetchone()
+                if existente:
+                    resultado["existentes"] += 1
+                    resultado["detalle"].append({
+                        "referencia": hallazgo["referencia"],
+                        "clase": clase,
+                        "estado": "EXISTENTE",
+                        "proceso_id": existente["id"],
+                    })
+                else:
+                    resultado["nuevas"] += 1
+                    resultado["detalle"].append({
+                        "referencia": hallazgo["referencia"],
+                        "clase": clase,
+                        "estado": "NUEVO",
+                        "municipio": _municipio_organismo(hallazgo.get("organismo")),
+                    })
+                continue
+
+            fecha_publicacion = _fecha_bop(hallazgo.get("fecha_publicacion"))
+            if fecha_publicacion is None:
+                resultado["seguimientos_revision"] += 1
+                resultado["detalle"].append({
+                    "referencia": hallazgo["referencia"],
+                    "clase": clase,
+                    "vinculacion": "FECHA_INVALIDA",
+                    "proceso_id": None,
+                })
+                continue
+
+            municipio = _municipio_organismo(hallazgo.get("organismo"))
+            cursor.execute(
+                """
+                SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
+                FROM procesos p
+                JOIN organismos o ON o.id=p.organismo_id
+                WHERE o.tipo='AYUNTAMIENTO'
+                  AND LOWER(COALESCE(o.provincia,'')) IN ('castellón','castellon')
+                  AND p.ambito_administrativo='SI'
+                  AND p.estado='EN_CURSO'
+                  AND p.fecha_convocatoria IS NOT NULL
+                  AND p.fecha_convocatoria <= %s
+                ORDER BY p.fecha_convocatoria DESC,p.id DESC
+                """,
+                (fecha_publicacion,),
+            )
+            candidatos = list(cursor.fetchall())
+            hallazgo_matching = dict(hallazgo)
+            hallazgo_matching["denominacion"] = municipio
+            hallazgo_matching["extracto"] = hallazgo.get("titulo") or ""
+            proceso, motivo = seleccionar_proceso_seguimiento(
+                hallazgo_matching,
+                candidatos,
+            )
+            if proceso:
+                resultado["seguimientos_vinculados"] += 1
+            else:
+                resultado["seguimientos_revision"] += 1
+            resultado["detalle"].append({
+                "referencia": hallazgo["referencia"],
+                "clase": clase,
+                "municipio": municipio,
+                "vinculacion": motivo,
+                "proceso_id": proceso["id"] if proceso else None,
+            })
+
+        connection.rollback()
+    return resultado
