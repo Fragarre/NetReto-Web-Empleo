@@ -360,6 +360,7 @@ def limpiar_anuncios_no_empleo() -> dict[str, int]:
     registros = ("2026/10924", "2026/10931", "2026/11054")
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            organismo_id, _ = _resolver_identidad_bop_valencia(cursor)
             cursor.execute("SELECT id FROM procesos WHERE organismo_id=%s AND codigo_externo = ANY(%s)", (organismo_id, list(registros)))
             ids = [row[0] for row in cursor.fetchall()]
             if ids:
