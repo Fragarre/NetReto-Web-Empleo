@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from psycopg.rows import dict_row
 
 from .ambito_administrativo import clasificar_ambito_administrativo
-from .bop_valencia_municipios import _clasificar_anuncio
+from .bop_valencia_municipios import _clasificar_anuncio, _sin
 from .bop_alicante import seleccionar_proceso_seguimiento
 from .database import get_connection
 
@@ -182,6 +182,32 @@ def _cargar_boletin_anterior(client: httpx.Client, html_inicial: str, source: st
     raise RuntimeError("La respuesta JSF no contiene la actualización del formulario")
 
 
+def _clasificar_anuncio_castellon(titulo: str) -> str:
+    """Clasificación conservadora adaptada a las fórmulas observadas en BOP Castellón."""
+    clase = _clasificar_anuncio(titulo)
+    if clase != "SEGUIMIENTO":
+        return clase
+
+    n = _sin(titulo)
+    # No promover a convocatoria inicial anuncios que describen hitos,
+    # impugnaciones o correcciones de unas bases ya publicadas.
+    bloqueos = (
+        "recurso", "rectificacion", "correccion", "lista provisional",
+        "lista definitiva", "listado provisional", "listado definitivo",
+        "admitidos", "admitidas", "excluidos", "excluidas", "tribunal",
+        "nombramiento", "emplazamiento", "alegacion", "abstencion",
+    )
+    if any(x in n for x in bloqueos):
+        return clase
+
+    nuevas_castellon = (
+        "bases rectoras especificas para la provision en propiedad",
+        "aprobacion bases provision en propiedad",
+        "bases concurso oposicion libre",
+    )
+    return "NUEVA_CONVOCATORIA" if any(x in n for x in nuevas_castellon) else clase
+
+
 def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = None) -> dict[str, Any]:
     """Fase 4: SOLO_REVISION sobre una ventana real de boletines oficiales."""
     resultado: dict[str, Any] = {
@@ -247,7 +273,7 @@ def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = N
             continue
         item = dict(anuncio)
         item["ambito_administrativo"] = ambito
-        item["clase"] = _clasificar_anuncio(item["titulo"])
+        item["clase"] = _clasificar_anuncio_castellon(item["titulo"])
         candidatos.append(item)
     from collections import Counter
     conteo = Counter(x["clase"] for x in candidatos)
