@@ -77,6 +77,8 @@ def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
         "modo": "SOLO_REVISION",
         "fuente": "Boletín Oficial de la Provincia de Castellón",
         "hasta": (hasta or date.today()).isoformat(),
+        "fecha_boletin": None,
+        "numero_bop": None,
         "descubiertos": 0,
         "administrativos": 0,
         "revision": 0,
@@ -93,6 +95,15 @@ def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
         return resultado
 
     sumario = _extraer_sumario(respuesta.text)
+    resultado["fecha_boletin"] = sumario["fecha_publicacion"]
+    resultado["numero_bop"] = sumario["numero_bop"]
+    if hasta is not None:
+        fecha_esperada = hasta.strftime("%d/%m/%Y")
+        if sumario["fecha_publicacion"] != fecha_esperada:
+            resultado["errores"].append(
+                f"El portal muestra {sumario['fecha_publicacion']!r}, no la fecha solicitada {fecha_esperada!r}"
+            )
+            return resultado
     candidatos = []
     for anuncio in sumario["anuncios"]:
         ambito = clasificar_ambito_administrativo({
