@@ -35,6 +35,9 @@ def test_fallo_queda_aislado_y_permite_continuar():
 
     assert primera[1]["estado"] == "ERROR"
     assert "RuntimeError: fallo controlado" in primera[1]["error"]
+    assert "RuntimeError: fallo controlado" in primera[1]["traceback"]
+    assert "test_periodic_isolation.py" in primera[1]["traceback"]
+    assert primera[0]["traceback"] == primera[1]["traceback"]
     assert segunda[1]["estado"] == "OK"
     assert llamadas == ["falla", "sigue"]
 
