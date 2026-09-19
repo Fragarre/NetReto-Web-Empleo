@@ -51,7 +51,7 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
                 "fecha_publicacion": fecha,
                 "organismo": organismo,
                 "titulo": titulo,
-                "url_documento": httpx.URL(DESCARGA).copy_add_param("idAnuncio", mid.group(1)).copy_add_param("idioma", "es").human_repr(),
+                "url_documento": str(httpx.URL(DESCARGA).copy_add_param("idAnuncio", mid.group(1)).copy_add_param("idioma", "es")),
             })
             continue
 
