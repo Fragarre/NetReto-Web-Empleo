@@ -15,7 +15,7 @@ from .gva_dogv_diagnostico import (
     _descubrir_dogv_en_fechas,
     _fecha_url_dogv,
 )
-from .gva_estatal_persist import _resolver_fuente_dogv
+from .gva_estatal_persist import _resolver_identidad_gva
 from .gva_estatal_seguimiento import (
     ESTADOS_TERMINALES,
     _obtener_html,
@@ -313,7 +313,7 @@ def actualizar_seguimientos_gva_dogv(*, aplicar: bool = False) -> dict[str, Any]
     migraciones_aplicadas = 0
     procesos_finalizados = 0
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        fuente_dogv_id = _resolver_fuente_dogv(cursor)
+        _, fuente_dogv_id = _resolver_identidad_gva(cursor)
         for accion in plan["acciones"]:
             tipo = accion["accion"]
             if tipo == "BOLSA_SEGUIMIENTO_SIMPLIFICADO":
