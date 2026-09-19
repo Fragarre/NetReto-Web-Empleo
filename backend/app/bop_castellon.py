@@ -69,16 +69,17 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
             # municipales, por lo que no debemos tomar la primera cabecera
             # de un ancestro amplio.
             organismo_anuncio = organismo
-            for contenedor in enlace.find_parents("div"):
-                cabeceras = contenedor.find_all(
-                    "span",
-                    class_=lambda clases: clases
-                    and ("titulo2" in clases.split() or "titulo3" in clases.split()),
-                    recursive=False,
-                )
-                if cabeceras:
-                    organismo_anuncio = _texto(cabeceras[0])
-                    break
+            if not organismo_anuncio:
+                for contenedor in enlace.find_parents("div"):
+                    cabeceras = contenedor.find_all(
+                        "span",
+                        class_=lambda clases: clases
+                        and ("titulo2" in clases.split() or "titulo3" in clases.split()),
+                        recursive=False,
+                    )
+                    if cabeceras:
+                        organismo_anuncio = _texto(cabeceras[0])
+                        break
 
             anuncios.append({
                 "id_anuncio": mid.group(1),
