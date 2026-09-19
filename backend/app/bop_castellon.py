@@ -24,7 +24,7 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
     numero = None
     fecha = None
     import re
-    m = re.search(r"Sumario\\s+BOP.*?(\\d+)\\s*\\|?\\s*(\\d{2}/\\d{2}/\\d{4})", texto, re.I)
+    m = re.search(r"Sumario\s+BOP.*?(\d+)\s*\|?\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
     if m:
         numero, fecha = m.group(1), m.group(2)
 
