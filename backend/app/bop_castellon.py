@@ -319,7 +319,12 @@ def _identidad_organismo(organismo: str | None) -> dict[str, str | None]:
     for patron in patrones:
         m = re.match(patron, texto, re.I)
         if m:
-            return {"tipo": "AYUNTAMIENTO", "provincia": "Castellón", "municipio": m.group(1).strip()}
+            municipio = m.group(1).strip()
+            # El BOPCS puede publicar conjuntamente las formas valenciana/castellana.
+            # Conservamos una única identidad municipal para resolver organismos.
+            if "/" in municipio:
+                municipio = municipio.split("/", 1)[0].strip()
+            return {"tipo": "AYUNTAMIENTO", "provincia": "Castellón", "municipio": municipio}
     return {"tipo": "DESCONOCIDO", "provincia": "Castellón", "municipio": None}
 
 
@@ -341,7 +346,7 @@ def preparar_revision_castellon(
             "titulo": hallazgo["titulo"],
             "organismo_fuente": hallazgo.get("organismo"),
             "organismo": identidad,
-            "persistencia_automatica": (
+            "identidad_admitida": (
                 hallazgo["clase"] == "NUEVA_CONVOCATORIA"
                 and identidad["tipo"] in ("AYUNTAMIENTO", "DIPUTACION")
             ),
