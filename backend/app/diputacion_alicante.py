@@ -243,6 +243,55 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     }
 
 
+
+def _familia_administrativa(denominacion: str | None) -> str | None:
+    n = _sin_acentos(denominacion or "")
+    if "auxiliar administr" in n:
+        return "AUXILIAR_ADMINISTRATIVO"
+    if any(x in n for x in ("tecnico de administracion general", "tecnica de administracion general")):
+        return "TAG"
+    if "administrativ" in n:
+        return "ADMINISTRATIVO"
+    return None
+
+
+def _buscar_proceso_candidato(cursor, datos: dict[str, Any], *, organismo_id: int) -> tuple[dict[str, Any] | None, str]:
+    """Vinculación conservadora: 0=nuevo, 1=vincular, >1=revisión."""
+    familia = _familia_administrativa(datos.get("denominacion"))
+    if not familia:
+        return None, "SIN_FAMILIA"
+
+    cursor.execute(
+        """
+        SELECT id,codigo_externo,denominacion,estado,fecha_convocatoria
+        FROM procesos
+        WHERE organismo_id=%s
+          AND ambito_administrativo='SI'
+        ORDER BY fecha_convocatoria DESC NULLS LAST,id DESC
+        """,
+        (organismo_id,),
+    )
+    candidatos = [
+        p for p in cursor.fetchall()
+        if _familia_administrativa(p.get("denominacion") or "") == familia
+    ]
+
+    if not candidatos:
+        return None, "SIN_COINCIDENCIA"
+
+    codigo = _norm(datos.get("codigo_externo"))
+    if codigo:
+        por_codigo = [p for p in candidatos if _norm(p.get("codigo_externo")) == codigo]
+        if len(por_codigo) == 1:
+            return por_codigo[0], "CODIGO_EXACTO"
+        if len(por_codigo) > 1:
+            return None, "CODIGO_AMBIGUO"
+
+    if len(candidatos) == 1:
+        return candidatos[0], "UNICO_CANDIDATO"
+    return None, "AMBIGUO"
+
+
 def _upsert(cursor, datos: dict[str, Any], *, organismo_id: int, fuente_id: int) -> tuple[int, bool]:
     cursor.execute(
         """
