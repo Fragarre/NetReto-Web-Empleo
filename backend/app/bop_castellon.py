@@ -85,6 +85,7 @@ def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
         "resumen_clases": {},
         "errores": [],
         "detalle": [],
+        "muestra_extraida": [],
     }
     try:
         with httpx.Client(timeout=45, follow_redirects=True, headers={"User-Agent": "TuCoach-Empleo/1.0"}) as client:
@@ -107,6 +108,10 @@ def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
                 f"El portal muestra {sumario['fecha_publicacion']!r}, no la fecha solicitada {fecha_esperada!r}"
             )
             return resultado
+    resultado["muestra_extraida"] = [
+        {"organismo": x["organismo"], "titulo": x["titulo"], "referencia": x["referencia"]}
+        for x in sumario["anuncios"]
+    ]
     candidatos = []
     for anuncio in sumario["anuncios"]:
         ambito = clasificar_ambito_administrativo({
