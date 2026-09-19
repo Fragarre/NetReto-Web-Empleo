@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 
 from .boe_local_extractor import extraer_convocatorias_boe_local
 from .database import get_connection
+from .organismos import resolver_fuente
 
 
 def _sin(texto: str | None) -> str:
@@ -107,13 +108,13 @@ def _datos_boe(convocatoria: dict[str, Any], codigo: str) -> dict[str, Any]:
     }
 
 
-def _insertar_publicacion_boe(cursor, *, proceso_id: int, convocatoria: dict[str, Any], codigo: str) -> bool:
+def _insertar_publicacion_boe(cursor, *, fuente_id: int, proceso_id: int, convocatoria: dict[str, Any], codigo: str) -> bool:
     url = convocatoria.get("url_html")
     if not url:
         raise RuntimeError(f"URL BOE no disponible para {codigo}")
     cursor.execute(
-        "SELECT 1 FROM publicaciones WHERE fuente_id=9 AND referencia=%s LIMIT 1",
-        (codigo,),
+        "SELECT 1 FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
+        (fuente_id, codigo),
     )
     if cursor.fetchone() is not None:
         return False
@@ -121,10 +122,10 @@ def _insertar_publicacion_boe(cursor, *, proceso_id: int, convocatoria: dict[str
         """
         INSERT INTO publicaciones (
             proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,datos_json,detectada_at
-        ) VALUES (%s,9,%s,'BOE',%s,%s,%s,%s,NOW())
+        ) VALUES (%s,%s,%s,'BOE',%s,%s,%s,%s,NOW())
         """,
         (
-            proceso_id, codigo, convocatoria.get("denominacion"),
+            proceso_id, fuente_id, codigo, convocatoria.get("denominacion"),
             convocatoria.get("fecha_boe"), url,
             Jsonb({
                 "origen": "BOE_LOCAL",
@@ -163,9 +164,12 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute("SELECT id,nombre,tipo,provincia,municipio FROM organismos ORDER BY id")
         organismos = list(cursor.fetchall())
-        cursor.execute("SELECT id FROM fuentes WHERE id=9 AND tipo='BOE'")
-        if cursor.fetchone() is None:
-            raise RuntimeError("No existe la fuente BOE esperada (id=9, tipo=BOE)")
+        fuente_boe = resolver_fuente(
+            cursor,
+            nombre="Boletín Oficial del Estado",
+            tipo="BOE",
+        )
+        fuente_boe_id = fuente_boe["id"]
 
         for convocatoria in extraccion["detalle"]:
             if convocatoria.get("provincia") != "Valencia":
@@ -254,7 +258,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                             proceso_id,
                         ),
                     )
-                    if _insertar_publicacion_boe(cursor, proceso_id=proceso_id, convocatoria=convocatoria, codigo=codigo):
+                    if _insertar_publicacion_boe(cursor, fuente_id=fuente_boe_id, proceso_id=proceso_id, convocatoria=convocatoria, codigo=codigo):
                         resultado["publicaciones_creadas"] += 1
                     resultado["vinculadas_bop"] += 1
                     item["proceso_id"] = proceso_id
@@ -297,14 +301,14 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                         organismo_id,codigo_externo,identificador_estable,denominacion,plazas,
                         sistema_selectivo,turno,estado,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,
                         es_oportunidad,ambito_administrativo,datos_json,updated_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,'EN_CURSO',%s,%s::date::timestamptz,9,TRUE,'SI',%s,NOW())
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,'EN_CURSO',%s,%s::date::timestamptz,%s,TRUE,'SI',%s,NOW())
                     RETURNING id
                     """,
                     (
                         organismo["id"], codigo, estable, convocatoria.get("denominacion"),
                         convocatoria.get("plazas"), convocatoria.get("sistema_selectivo"),
                         convocatoria.get("turno"), convocatoria.get("fecha_boe"), convocatoria.get("fecha_boe"),
-                        Jsonb(datos_proceso),
+                        fuente_boe_id, Jsonb(datos_proceso),
                     ),
                 )
                 proceso_id = cursor.fetchone()["id"]
@@ -312,7 +316,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                 item["proceso_id"] = proceso_id
                 item["estado_importacion"] = "INSERTADA"
 
-                if _insertar_publicacion_boe(cursor, proceso_id=proceso_id, convocatoria=convocatoria, codigo=codigo):
+                if _insertar_publicacion_boe(cursor, fuente_id=fuente_boe_id, proceso_id=proceso_id, convocatoria=convocatoria, codigo=codigo):
                     resultado["publicaciones_creadas"] += 1
 
             resultado["detalle"].append(item)
