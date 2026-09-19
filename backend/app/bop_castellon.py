@@ -24,7 +24,7 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
     numero = None
     fecha = None
     import re
-    m = re.search(r"Sumario BOP\s*N[º°]?\s*(\d+)\s*\|\s*(\d{2}/\d{2}/\d{4})", texto, re.I)
+    m = re.search(r"Sumario\\s+BOP.*?(\\d+)\\s*\\|?\\s*(\\d{2}/\\d{2}/\\d{4})", texto, re.I)
     if m:
         numero, fecha = m.group(1), m.group(2)
 
@@ -97,6 +97,9 @@ def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
     sumario = _extraer_sumario(respuesta.text)
     resultado["fecha_boletin"] = sumario["fecha_publicacion"]
     resultado["numero_bop"] = sumario["numero_bop"]
+    if sumario["fecha_publicacion"] is None or sumario["numero_bop"] is None:
+        resultado["errores"].append("No se pudo identificar fecha/número del boletín mostrado")
+        return resultado
     if hasta is not None:
         fecha_esperada = hasta.strftime("%d/%m/%Y")
         if sumario["fecha_publicacion"] != fecha_esperada:
