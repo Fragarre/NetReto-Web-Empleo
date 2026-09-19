@@ -309,9 +309,10 @@ def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any]) -> bool:
     return True
 
 
-def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
+def importar_diputacion_alicante(*, max_detalles: int = 100, aplicar: bool = False) -> dict[str, Any]:
     headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
     estadisticas: dict[str, Any] = {
+        "modo": "APLICAR" if aplicar else "SOLO_REVISION",
         "descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "errores": 0,
         "errores_detalle": [],
     }
@@ -320,6 +321,26 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
         rss.raise_for_status()
         enlaces = _parse_rss(rss.content)[:max_detalles]
         estadisticas["descubiertos"] = len(enlaces)
+
+        if not aplicar:
+            for title, url, rss_date in enlaces:
+                try:
+                    respuesta = client.get(url)
+                    respuesta.raise_for_status()
+                    datos = parsear_detalle(url, title, respuesta.text)
+                    estadisticas["procesos"] += 1
+                    estadisticas["publicaciones"] += 1 + len(datos["seguimiento"])
+                except Exception as exc:
+                    estadisticas["errores"] += 1
+                    errores = estadisticas["errores_detalle"]
+                    if len(errores) < 10:
+                        errores.append({
+                            "codigo": _codigo(url, title),
+                            "url": url,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        })
+            return estadisticas
+
         with get_connection() as connection:
             with connection.cursor() as cursor:
                 for title, url, rss_date in enlaces:
@@ -357,7 +378,6 @@ def importar_diputacion_alicante(*, max_detalles: int = 100) -> dict[str, Any]:
                         cursor = connection.cursor()
             connection.commit()
     return estadisticas
-
 
 def diagnosticar_diputacion_alicante() -> dict[str, Any]:
     headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
