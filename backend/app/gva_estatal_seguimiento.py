@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 
 from .database import get_connection
 from .gva_estatal_source import DETALLE, _get, _limpio, _sin
+from .organismos import resolver_organismo
 
 
 ESTADOS_TERMINALES = {
@@ -144,15 +145,24 @@ def _referencia_estatal(datos_json: dict[str, Any] | None) -> int | None:
 def _cargar_procesos_activos() -> list[dict[str, Any]]:
     """Compatibilidad para la auditoría diagnóstica existente."""
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        organismo = resolver_organismo(
+            cursor,
+            tipo="ADMINISTRACION_AUTONOMICA",
+            provincia=None,
+            nombre="Generalitat Valenciana",
+        )
+        if organismo is None:
+            raise RuntimeError("Seguimiento GVA bloqueado: no existe el organismo Generalitat Valenciana")
         cursor.execute(
             """
             SELECT id, identificador_estable, denominacion, estado, datos_json
             FROM procesos
-            WHERE organismo_id=1
+            WHERE organismo_id=%s
               AND es_oportunidad=TRUE
               AND ambito_administrativo='SI'
             ORDER BY id
-            """
+            """,
+            (organismo["id"],),
         )
         filas = list(cursor.fetchall())
     salida: list[dict[str, Any]] = []

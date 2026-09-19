@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 
 from .database import get_connection
 from .gva_estatal_import import LEGACY_ALIASES
+from .organismos import resolver_fuente, resolver_organismo
 
 FUENTE_GVA_URL_ESTATAL = "https://administracion.gob.es/empleopublico/resultadosEmpleo"
 DOGV_HOST = "dogv.gva.es"
@@ -144,34 +145,26 @@ def planificar_persistencia(
     return {"modo": "SOLO_REVISION", "resumen": resumen, "acciones": acciones}
 
 
-def _resolver_fuente_dogv(cursor) -> int:
-    """Localiza de forma inequívoca la fuente oficial DOGV; nunca reutiliza sede.gva.es."""
-    cursor.execute(
-        """
-        SELECT id, nombre, tipo, url
-        FROM fuentes
-        WHERE activa=TRUE
-          AND (
-                UPPER(COALESCE(tipo,''))='DOGV'
-                OR LOWER(COALESCE(url,'')) LIKE %s
-                OR LOWER(COALESCE(nombre,'')) LIKE '%%diari oficial de la generalitat valenciana%%'
-              )
-        ORDER BY id
-        """,
-        (f"%{DOGV_HOST}%",),
+def _resolver_identidad_gva(cursor) -> tuple[int, int]:
+    """Resuelve de forma inequívoca Generalitat Valenciana y su fuente DOGV."""
+    organismo = resolver_organismo(
+        cursor,
+        tipo="ADMINISTRACION_AUTONOMICA",
+        provincia=None,
+        nombre="Generalitat Valenciana",
     )
-    candidatas = list(cursor.fetchall())
-    if len(candidatas) != 1:
-        raise RuntimeError(
-            "Persistencia GVA bloqueada: debe existir exactamente una fuente DOGV activa "
-            f"y se encontraron {len(candidatas)}"
-        )
-    fuente = candidatas[0]
+    if organismo is None:
+        raise RuntimeError("Persistencia GVA bloqueada: no existe el organismo Generalitat Valenciana")
+    fuente = resolver_fuente(
+        cursor,
+        nombre="Diari Oficial de la Generalitat Valenciana",
+        tipo="DOGV",
+        organismo_id=organismo["id"],
+    )
     url = str(fuente.get("url") or "").lower()
-    tipo = str(fuente.get("tipo") or "").upper()
-    if tipo != "DOGV" and DOGV_HOST not in url:
+    if DOGV_HOST not in url:
         raise RuntimeError("Persistencia GVA bloqueada: la fuente localizada no identifica inequívocamente al DOGV")
-    return int(fuente["id"])
+    return int(organismo["id"]), int(fuente["id"])
 
 
 def _cargar_existentes(cursor, identificadores: list[str]) -> dict[str, dict[str, Any]]:
@@ -206,7 +199,7 @@ def _cargar_publicaciones_estatales(
     return salida
 
 
-def _insertar_nuevo(cursor, registro: dict[str, Any], *, fuente_dogv_id: int) -> int:
+def _insertar_nuevo(cursor, registro: dict[str, Any], *, organismo_gva_id: int, fuente_dogv_id: int) -> int:
     datos_json = dict(registro.get("datos_json") or {})
     datos_json["fuente_principal_estatal"] = FUENTE_GVA_URL_ESTATAL
     datos_json["fuente_estatal"] = _metadatos_estatales(registro)
@@ -220,7 +213,7 @@ def _insertar_nuevo(cursor, registro: dict[str, Any], *, fuente_dogv_id: int) ->
             ultima_publicacion_at, fuente_principal_id, datos_json, es_oportunidad,
             origen_dato, revision_estado, ambito_administrativo, created_at, updated_at
         ) VALUES (
-            1, %s, %s, %s,
+            %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s,
             %s::date::timestamptz, %s, %s, TRUE,
@@ -230,6 +223,7 @@ def _insertar_nuevo(cursor, registro: dict[str, Any], *, fuente_dogv_id: int) ->
         RETURNING id
         """,
         (
+            organismo_gva_id,
             str(registro.get("referencia_estatal")),
             registro["identificador_estable"],
             registro["denominacion"],
@@ -342,7 +336,7 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
     identificadores = [r["identificador_estable"] for r in registros]
     referencias = [int(r["referencia_estatal"]) for r in registros]
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        fuente_dogv_id = _resolver_fuente_dogv(cursor)
+        organismo_gva_id, fuente_dogv_id = _resolver_identidad_gva(cursor)
         existentes = _cargar_existentes(cursor, identificadores)
         publicaciones = _cargar_publicaciones_estatales(
             cursor,
@@ -371,6 +365,7 @@ def persistir_registros(registros: list[dict[str, Any]], *, aplicar: bool = Fals
                 proceso_id = _insertar_nuevo(
                     cursor,
                     accion["registro"],
+                    organismo_gva_id=organismo_gva_id,
                     fuente_dogv_id=fuente_dogv_id,
                 )
                 ids_nuevos[accion["identificador_estable"]] = proceso_id

@@ -231,13 +231,14 @@ def _postprocesar_ambito_y_cambios() -> tuple[int, int]:
     clasificados = 0
     cambios_tecnicos = 0
     with get_connection() as connection, connection.cursor() as cursor:
+        organismo_id, _ = _bop._resolver_identidad_bop_valencia(cursor)
         cursor.execute(
             """
             SELECT id, denominacion, cuerpo_escala, grupo
             FROM procesos
             WHERE organismo_id=%s AND ambito_administrativo='REVISION'
             """,
-            (_bop.ORGANISMO_ID,),
+            (organismo_id,),
         )
         for proceso_id, denominacion, cuerpo_escala, grupo in cursor.fetchall():
             ambito = clasificar_ambito_administrativo({
@@ -264,7 +265,7 @@ def _postprocesar_ambito_y_cambios() -> tuple[int, int]:
               AND c.valor_anterior IS NULL
               AND COALESCE(c.campo,'') <> 'publicacion'
             """,
-            (_bop.ORGANISMO_ID,),
+            (organismo_id,),
         )
         cambios_tecnicos = cursor.rowcount
         connection.commit()

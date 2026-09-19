@@ -14,12 +14,11 @@ from pypdf import PdfReader
 from psycopg.types.json import Jsonb
 
 from .database import get_connection
+from .organismos import resolver_fuente, resolver_organismo
 
 BOP_URL = "https://bop.dival.es/bop/"
 BOP_PORTAL_URL = "https://bop.dival.es/bop/xhtml/portal.xhtml"
 DOWNLOAD_URL = "https://bop.dival.es/bop/downloads"
-ORGANISMO_ID = 2
-FUENTE_ID = 2
 
 INCLUIDOS = (
     "convocatoria", "proceso selectivo", "selección", "seleccion",
@@ -283,6 +282,24 @@ def _identificador_estable(titulo: str, texto: str) -> str:
     return "DVAL:T:" + hashlib.sha256(_sin(titulo).encode("utf-8")).hexdigest()[:24]
 
 
+def _resolver_identidad_bop_valencia(cursor) -> tuple[int, int]:
+    organismo = resolver_organismo(
+        cursor,
+        tipo="DIPUTACION",
+        provincia="Valencia",
+        nombre="Diputación Provincial de Valencia",
+    )
+    if organismo is None:
+        raise RuntimeError("No existe el organismo Diputación Provincial de Valencia")
+    fuente = resolver_fuente(
+        cursor,
+        nombre="Boletín Oficial de la Provincia de Valencia",
+        tipo="BOP",
+        organismo_id=organismo["id"],
+    )
+    return organismo["id"], fuente["id"]
+
+
 def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, Any]:
     stats: dict[str, Any] = {"descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "anuncios": []}
     headers = {"User-Agent": "NetReto-Empleo/0.1 (https://netexamenes.com)", "Accept-Language": "es-ES,es;q=0.9"}
@@ -291,6 +308,7 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
         stats["descubiertos"] = len(anuncios)
         with get_connection() as connection:
             with connection.cursor() as cursor:
+                organismo_id, fuente_id = _resolver_identidad_bop_valencia(cursor)
                 for anuncio in anuncios:
                     fecha = anuncio["fecha_publicacion"]
                     titulo = anuncio["titulo"]
@@ -316,18 +334,18 @@ def importar_bop_valencia(historico: bool = False, dias: int = 1) -> dict[str, A
                                 if existente[i] != nuevos[i - 1] and nuevos[i - 1] is not None:
                                     cursor.execute("INSERT INTO cambios (proceso_id,tipo,campo,valor_anterior,valor_nuevo,resumen,significativo) VALUES (%s,%s,%s,%s,%s,%s,TRUE)", (proceso_id, "ACTUALIZACION", campo, str(existente[i]) if existente[i] is not None else None, str(nuevos[i - 1]), f"Actualización de la convocatoria: {campo}"))
                                     stats["cambios"] += 1
-                            cursor.execute("UPDATE procesos SET denominacion=%s,grupo=COALESCE(%s,grupo),subgrupo=COALESCE(%s,subgrupo),tipo_proceso=%s,turno=COALESCE(%s,turno),plazas=COALESCE(%s,plazas),estado=%s,anio_convocatoria=COALESCE(%s,anio_convocatoria),fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,datos_json=%s,updated_at=NOW() WHERE id=%s", (nuevos[0], nuevos[1], nuevos[2], nuevos[3], nuevos[4], nuevos[5], nuevos[6], nuevos[7], nuevos[8], ultima, FUENTE_ID, Jsonb({**(existente[10] or {}), "url_convocatoria": anuncio["url"], "registro_convocatoria": registro}), proceso_id))
+                            cursor.execute("UPDATE procesos SET denominacion=%s,grupo=COALESCE(%s,grupo),subgrupo=COALESCE(%s,subgrupo),tipo_proceso=%s,turno=COALESCE(%s,turno),plazas=COALESCE(%s,plazas),estado=%s,anio_convocatoria=COALESCE(%s,anio_convocatoria),fecha_convocatoria=COALESCE(%s,fecha_convocatoria),ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,datos_json=%s,updated_at=NOW() WHERE id=%s", (nuevos[0], nuevos[1], nuevos[2], nuevos[3], nuevos[4], nuevos[5], nuevos[6], nuevos[7], nuevos[8], ultima, fuente_id, Jsonb({**(existente[10] or {}), "url_convocatoria": anuncio["url"], "registro_convocatoria": registro}), proceso_id))
                         else:
-                            cursor.execute("UPDATE procesos SET ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,updated_at=NOW() WHERE id=%s", (ultima, FUENTE_ID, proceso_id))
+                            cursor.execute("UPDATE procesos SET ultima_publicacion_at=COALESCE(%s,ultima_publicacion_at),fuente_principal_id=%s,es_oportunidad=TRUE,updated_at=NOW() WHERE id=%s", (ultima, fuente_id, proceso_id))
                     else:
-                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,es_oportunidad,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s) RETURNING id", (ORGANISMO_ID, registro, estable, titulo, grupo, subgrupo, _tipo(contenido), _turno(contenido), plazas, "EN_CURSO", anio, fecha_convocatoria, ultima, FUENTE_ID, Jsonb({"registro": registro, "url_ultima_publicacion": anuncio["url"], "convocatoria_identificada": _convocatoria(contenido)})))
+                        cursor.execute("INSERT INTO procesos (organismo_id,codigo_externo,identificador_estable,denominacion,grupo,subgrupo,tipo_proceso,turno,plazas,estado,anio_convocatoria,fecha_convocatoria,ultima_publicacion_at,fuente_principal_id,es_oportunidad,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s) RETURNING id", (organismo_id, registro, estable, titulo, grupo, subgrupo, _tipo(contenido), _turno(contenido), plazas, "EN_CURSO", anio, fecha_convocatoria, ultima, fuente_id, Jsonb({"registro": registro, "url_ultima_publicacion": anuncio["url"], "convocatoria_identificada": _convocatoria(contenido)})))
                         proceso_id = cursor.fetchone()[0]
                         stats["procesos"] += 1
                     contenido_hash = hashlib.sha256(texto.encode("utf-8")).hexdigest()
                     cursor.execute("SELECT id FROM publicaciones WHERE proceso_id=%s AND referencia=%s LIMIT 1", (proceso_id, registro))
                     publicacion = cursor.fetchone()
                     if publicacion is None:
-                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (proceso_id, FUENTE_ID, registro, tipo_publicacion, titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"], "es_convocatoria_base": es_base})))
+                        cursor.execute("INSERT INTO publicaciones (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,url,contenido_hash,contenido_texto,datos_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id", (proceso_id, fuente_id, registro, tipo_publicacion, titulo, fecha, anuncio["url"], contenido_hash, texto, Jsonb({"registro": registro, "url": anuncio["url"], "es_convocatoria_base": es_base})))
                         publicacion_id = cursor.fetchone()[0]
                         stats["publicaciones"] += 1
                         if not es_base:
@@ -342,7 +360,8 @@ def limpiar_anuncios_no_empleo() -> dict[str, int]:
     registros = ("2026/10924", "2026/10931", "2026/11054")
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM procesos WHERE organismo_id=%s AND codigo_externo = ANY(%s)", (ORGANISMO_ID, list(registros)))
+            organismo_id, _ = _resolver_identidad_bop_valencia(cursor)
+            cursor.execute("SELECT id FROM procesos WHERE organismo_id=%s AND codigo_externo = ANY(%s)", (organismo_id, list(registros)))
             ids = [row[0] for row in cursor.fetchall()]
             if ids:
                 cursor.execute("DELETE FROM cambios WHERE proceso_id = ANY(%s)", (ids,))
