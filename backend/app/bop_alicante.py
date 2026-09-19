@@ -10,6 +10,7 @@ from xml.sax.saxutils import escape
 import httpx
 
 from .ambito_administrativo import clasificar_ambito_administrativo
+from .bop_valencia_municipios import _clasificar_anuncio
 
 ENDPOINT = (
     "https://sede.diputacionalicante.es/wp-content/themes/"
@@ -73,57 +74,6 @@ def _sin(texto: str) -> str:
     )
 
 
-def _clasificar_publicacion(registro: dict[str, Any]) -> str:
-    texto = _sin(" ".join(
-        str(registro.get(k) or "")
-        for k in ("extracto", "organismo", "denominacion")
-    ))
-
-    internos = (
-        "libre designacion", "comision de servicios", "concurso de traslados",
-        "concurso especifico de meritos", "provision de puesto",
-        "promocion interna", "cesion de la bolsa", "convenio de colaboracion",
-    )
-    if any(x in texto for x in internos):
-        return "EXCLUIDO_INTERNO"
-
-    bolsas = (
-        "bolsa de empleo", "bolsa de trabajo", "borsa d'ocupacio",
-        "borsa de treball", "funcionario interino", "funcionaria interina",
-    )
-    if any(x in texto for x in bolsas):
-        return "BOLSA_TEMPORAL"
-
-    seguimiento = (
-        "relacion provisional", "relacion definitiva", "admitidos", "admitidas",
-        "excluidos", "excluidas", "tribunal", "primer ejercicio",
-        "fecha del ejercicio", "resultados", "nombramiento",
-        "propuesta de nombramiento", "correccion de errores",
-        "modificacion", "resolucion de recursos", "acumulacion de plazas",
-    )
-    if any(x in texto for x in seguimiento):
-        return "SEGUIMIENTO"
-
-    bases = (
-        "aprobacion de las bases", "bases de la convocatoria",
-        "bases y la convocatoria", "bases reguladoras del procedimiento selectivo",
-        "convocatoria para la provision", "convocatoria para cubrir",
-        "convocatoria de una plaza", "convocatoria de plazas",
-    )
-    if any(x in texto for x in bases):
-        return "NUEVA_CONVOCATORIA"
-
-    ruido = (
-        "presupuesto", "modificacion presupuestaria", "cuenta general",
-        "ordenanza", "subvencion", "tribut", "recaudacion", "padron",
-        "exposicion publica", "oferta de empleo publico",
-    )
-    if any(x in texto for x in ruido):
-        return "RUIDO"
-
-    return "REVISION"
-
-
 def _es_candidato_empleo(registro: dict[str, Any]) -> bool:
     return registro.get("ambito_administrativo") == "SI"
 
@@ -173,7 +123,7 @@ def consultar_bop_alicante(
     normalizados = [_normalizar(r) for r in registros[:max_items] if isinstance(r, dict)]
     administrativos = [r for r in normalizados if _es_candidato_empleo(r)]
     for r in administrativos:
-        r["clase"] = _clasificar_publicacion(r)
+        r["clase"] = _clasificar_anuncio(r["extracto"])
 
     conteo = Counter(r["clase"] for r in administrativos)
     resultado["descubiertos"] = len(normalizados)
