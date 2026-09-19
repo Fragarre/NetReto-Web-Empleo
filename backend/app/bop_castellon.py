@@ -161,8 +161,8 @@ def _cargar_boletin_anterior(client: httpx.Client, html_inicial: str, source: st
     raise RuntimeError("La respuesta JSF no contiene la actualización del formulario")
 
 
-def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
-    """Fase 4: SOLO_REVISION sobre el sumario oficial visible."""
+def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = None) -> dict[str, Any]:
+    """Fase 4: SOLO_REVISION sobre una ventana real de boletines oficiales."""
     resultado: dict[str, Any] = {
         "modo": "SOLO_REVISION",
         "fuente": "Boletín Oficial de la Provincia de Castellón",
@@ -177,13 +177,63 @@ def consultar_bop_castellon(*, hasta: date | None = None) -> dict[str, Any]:
         "detalle": [],
         "muestra_extraida": [],
     }
+    limite_hasta = hasta or date.today()
+    limite_desde = desde or limite_hasta
+    resultado["desde"] = limite_desde.isoformat()
+    resultado["boletines_revisados"] = 0
+    if limite_desde > limite_hasta:
+        resultado["errores"].append("La fecha desde no puede ser posterior a hasta")
+        return resultado
     try:
         with httpx.Client(timeout=45, follow_redirects=True, headers={"User-Agent": "TuCoach-Empleo/1.0"}) as client:
             respuesta = client.get(PORTAL)
             respuesta.raise_for_status()
+            html_inicial = respuesta.text
+            actual = _extraer_sumario(html_inicial)
+            sumarios = []
+            if actual["fecha_publicacion"]:
+                fecha_actual = datetime.strptime(actual["fecha_publicacion"], "%d/%m/%Y").date()
+                if limite_desde <= fecha_actual <= limite_hasta:
+                    sumarios.append(actual)
+            for boletin in _boletines_disponibles(html_inicial):
+                if not (limite_desde <= boletin["fecha"] <= limite_hasta):
+                    continue
+                html_boletin = _cargar_boletin_anterior(client, html_inicial, boletin["source"])
+                sumario = _extraer_sumario(html_boletin)
+                fecha_esperada = boletin["fecha"].strftime("%d/%m/%Y")
+                if sumario["fecha_publicacion"] != fecha_esperada:
+                    raise RuntimeError(f"El portal devolvió {sumario['fecha_publicacion']!r} para BOP {boletin['numero']} ({fecha_esperada})")
+                sumarios.append(sumario)
     except Exception as exc:
         resultado["errores"].append(f"{type(exc).__name__}: {exc}")
         return resultado
+    anuncios_unicos = {}
+    for sumario in sumarios:
+        for anuncio in sumario["anuncios"]:
+            anuncios_unicos.setdefault(anuncio["id_anuncio"], anuncio)
+    anuncios = list(anuncios_unicos.values())
+    resultado["boletines_revisados"] = len(sumarios)
+    if sumarios:
+        resultado["fecha_boletin"] = sumarios[0]["fecha_publicacion"]
+        resultado["numero_bop"] = sumarios[0]["numero_bop"]
+    resultado["muestra_extraida"] = [{"organismo": x["organismo"], "titulo": x["titulo"], "referencia": x["referencia"]} for x in anuncios[:20]]
+    candidatos = []
+    for anuncio in anuncios:
+        ambito = clasificar_ambito_administrativo({"denominacion": anuncio["titulo"], "cuerpo_escala": None, "grupo": None})
+        if ambito != "SI":
+            continue
+        item = dict(anuncio)
+        item["ambito_administrativo"] = ambito
+        item["clase"] = _clasificar_anuncio(item["titulo"])
+        candidatos.append(item)
+    from collections import Counter
+    conteo = Counter(x["clase"] for x in candidatos)
+    resultado["descubiertos"] = len(anuncios)
+    resultado["administrativos"] = len(candidatos)
+    resultado["revision"] = conteo.get("REVISION", 0)
+    resultado["resumen_clases"] = dict(sorted(conteo.items()))
+    resultado["detalle"] = candidatos
+    return resultado
 
     sumario = _extraer_sumario(respuesta.text)
     resultado["fecha_boletin"] = sumario["fecha_publicacion"]
