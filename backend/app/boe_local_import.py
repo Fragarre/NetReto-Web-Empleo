@@ -39,12 +39,21 @@ def _familia(denominacion: str | None) -> str | None:
     return None
 
 
-def _buscar_organismo(organismos: list[dict[str, Any]], entidad: str | None) -> dict[str, Any] | None:
+def _buscar_organismo(
+    organismos: list[dict[str, Any]],
+    entidad: str | None,
+    provincia: str | None,
+) -> dict[str, Any] | None:
     visible = _entidad_visible(entidad)
-    if not visible:
+    if not visible or not provincia:
         return None
     objetivo = _sin(visible)
-    exactos = [o for o in organismos if _sin(o.get("nombre")) == objetivo]
+    provincia_objetivo = _sin(provincia)
+    exactos = [
+        o for o in organismos
+        if _sin(o.get("nombre")) == objetivo
+        and _sin(o.get("provincia")) == provincia_objetivo
+    ]
     return exactos[0] if len(exactos) == 1 else None
 
 
@@ -171,8 +180,10 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
         )
         fuente_boe_id = fuente_boe["id"]
 
+        provincias_objetivo = {"Valencia", "Alicante", "Castellón"}
         for convocatoria in extraccion["detalle"]:
-            if convocatoria.get("provincia") != "Valencia":
+            provincia = convocatoria.get("provincia")
+            if provincia not in provincias_objetivo:
                 resultado["fuera_alcance_provincia"] += 1
                 continue
 
