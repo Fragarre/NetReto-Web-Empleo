@@ -19,8 +19,6 @@ from .database import get_connection
 RSS_URL = "https://sede.diputacionalicante.es/rssoposiciondipu/"
 SEGUIMIENTO_URL = "https://sede.diputacionalicante.es/oposiciones-diputacion/"
 BASE_URL = "https://sede.diputacionalicante.es/"
-ORGANISMO_ID = 4
-FUENTE_ID = 4
 
 EXCLUIDOS = (
     "libre designacion", "libre designación",
@@ -245,7 +243,7 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     }
 
 
-def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
+def _upsert(cursor, datos: dict[str, Any], *, organismo_id: int, fuente_id: int) -> tuple[int, bool]:
     cursor.execute(
         """
         INSERT INTO procesos (
@@ -272,20 +270,20 @@ def _upsert(cursor, datos: dict[str, Any]) -> tuple[int, bool]:
         RETURNING id, (xmax = 0) AS inserted
         """,
         (
-            ORGANISMO_ID, datos["codigo_externo"], datos["identificador_estable"], datos["denominacion"],
+            organismo_id, datos["codigo_externo"], datos["identificador_estable"], datos["denominacion"],
             datos["grupo"], datos["tipo_proceso"], datos["sistema_selectivo"], datos["turno"], datos["plazas"],
             datos["estado"], datos["es_oportunidad"], datos["anio_convocatoria"], datos["fecha_apertura"],
-            datos["fecha_cierre"], datos["ultima_publicacion_at"], FUENTE_ID, Jsonb(datos["datos_json"]),
+            datos["fecha_cierre"], datos["ultima_publicacion_at"], fuente_id, Jsonb(datos["datos_json"]),
         ),
     )
     row = cursor.fetchone()
     return int(row[0]), bool(row[1])
 
 
-def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any]) -> bool:
+def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any], *, fuente_id: int) -> bool:
     cursor.execute(
         "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
-        (FUENTE_ID, pub["referencia"]),
+        (fuente_id, pub["referencia"]),
     )
     if cursor.fetchone() is not None:
         return False
@@ -299,7 +297,7 @@ def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any]) -> bool:
         RETURNING id
         """,
         (
-            proceso_id, FUENTE_ID, pub["referencia"], pub["tipo"], pub["titulo"],
+            proceso_id, fuente_id, pub["referencia"], pub["tipo"], pub["titulo"],
             pub["fecha_publicacion"], pub["url"], pub["contenido_hash"],
             pub["contenido_texto"], Jsonb(pub["datos_json"]),
         ),
@@ -348,6 +346,10 @@ def importar_diputacion_alicante(*, max_detalles: int = 100, aplicar: bool = Fal
                             "error": f"{type(exc).__name__}: {exc}",
                         })
             return estadisticas
+
+        # La identidad productiva de Alicante debe resolverse/configurarse antes de persistir.
+        # SOLO_REVISION permanece operativo y no accede a la BD.
+        raise RuntimeError("Persistencia de Diputación de Alicante no habilitada: identidad funcional pendiente de configuración")
 
         with get_connection() as connection:
             with connection.cursor() as cursor:
