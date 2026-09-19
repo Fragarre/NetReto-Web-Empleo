@@ -23,6 +23,7 @@ from . import bop_valencia as _bop
 from . import bop_valencia_patch as _bop_patch
 from .ayuntamiento_valencia import importar_ayuntamiento_valencia
 from .bop_valencia_municipios import descubrir_municipales_bop, importar_municipales_bop
+from .bop_castellon import importar_bop_castellon
 from .boe_local_diagnostico import diagnosticar_boe_local
 from .boe_local_extractor import extraer_convocatorias_boe_local
 from .boe_local_import import previsualizar_importacion_boe_local
@@ -314,6 +315,21 @@ def importar_bop_municipios_admin(hasta: date = Query(...), dias: int = Query(de
         return importar_municipales_bop(hasta=hasta, dias=dias, aplicar=aplicar)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en importación municipal BOP: {exc}") from exc
+
+
+@router.post("/import/bop-castellon")
+def importar_bop_castellon_admin(
+    desde: date | None = Query(default=None),
+    hasta: date | None = Query(default=None),
+    aplicar: bool = Query(default=False),
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Previsualiza por defecto; solo escribe con aplicar=true."""
+    _validar_import_secret(x_import_secret)
+    try:
+        return importar_bop_castellon(desde=desde, hasta=hasta, aplicar=aplicar)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en importación BOP Castellón: {exc}") from exc
 
 
 @router.post("/import/bop-valencia-tramo")
