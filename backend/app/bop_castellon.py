@@ -301,11 +301,15 @@ def _fecha_bop(valor: str | None) -> date | None:
     return None
 
 
-def _municipio_organismo(organismo: str | None) -> str:
-    """Obtiene el municipio de las cabeceras del sumario sin consultar BD."""
+def _identidad_organismo(organismo: str | None) -> dict[str, str | None]:
+    """Normaliza tipo, provincia y municipio de la cabecera sin consultar BD."""
     import re
 
     texto = " ".join((organismo or "").split()).strip()
+    normal = texto.upper()
+    if normal.startswith("DIPUTACIÓ PROVINCIAL") or normal.startswith("DIPUTACIÓN PROVINCIAL"):
+        return {"tipo": "DIPUTACION", "provincia": "Castellón", "municipio": None}
+
     patrones = (
         r"^AJUNTAMENT\s+D['’](.+)$",
         r"^AJUNTAMENT\s+DE\s+(.+)$",
@@ -315,8 +319,8 @@ def _municipio_organismo(organismo: str | None) -> str:
     for patron in patrones:
         m = re.match(patron, texto, re.I)
         if m:
-            return m.group(1).strip()
-    return texto
+            return {"tipo": "AYUNTAMIENTO", "provincia": "Castellón", "municipio": m.group(1).strip()}
+    return {"tipo": "DESCONOCIDO", "provincia": "Castellón", "municipio": None}
 
 
 def preparar_importacion_bop_castellon(
@@ -369,7 +373,7 @@ def preparar_importacion_bop_castellon(
                         "referencia": hallazgo["referencia"],
                         "clase": clase,
                         "estado": "NUEVO",
-                        "municipio": _municipio_organismo(hallazgo.get("organismo")),
+                        "organismo": _identidad_organismo(hallazgo.get("organismo")),
                     })
                 continue
 
@@ -384,7 +388,19 @@ def preparar_importacion_bop_castellon(
                 })
                 continue
 
-            municipio = _municipio_organismo(hallazgo.get("organismo"))
+            identidad = _identidad_organismo(hallazgo.get("organismo"))
+            if identidad["tipo"] != "AYUNTAMIENTO":
+                resultado["seguimientos_revision"] += 1
+                resultado["detalle"].append({
+                    "referencia": hallazgo["referencia"],
+                    "clase": clase,
+                    "organismo": identidad,
+                    "vinculacion": "TIPO_ORGANISMO_NO_IMPLEMENTADO",
+                    "proceso_id": None,
+                })
+                continue
+
+            municipio = identidad["municipio"]
             cursor.execute(
                 """
                 SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
