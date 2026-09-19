@@ -176,6 +176,7 @@ def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = N
         "errores": [],
         "detalle": [],
         "muestra_extraida": [],
+        "sin_organismo": [],
     }
     limite_hasta = hasta or date.today()
     limite_desde = desde or limite_hasta
@@ -217,6 +218,7 @@ def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = N
         resultado["fecha_boletin"] = sumarios[0]["fecha_publicacion"]
         resultado["numero_bop"] = sumarios[0]["numero_bop"]
     resultado["muestra_extraida"] = [{"organismo": x["organismo"], "titulo": x["titulo"], "referencia": x["referencia"]} for x in anuncios[:20]]
+    resultado["sin_organismo"] = [{"titulo": x["titulo"], "referencia": x["referencia"], "numero_bop": x["numero_bop"], "fecha_publicacion": x["fecha_publicacion"]} for x in anuncios if not x["organismo"]]
     candidatos = []
     for anuncio in anuncios:
         ambito = clasificar_ambito_administrativo({"denominacion": anuncio["titulo"], "cuerpo_escala": None, "grupo": None})
@@ -235,42 +237,3 @@ def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = N
     resultado["detalle"] = candidatos
     return resultado
 
-    sumario = _extraer_sumario(respuesta.text)
-    resultado["fecha_boletin"] = sumario["fecha_publicacion"]
-    resultado["numero_bop"] = sumario["numero_bop"]
-    if sumario["fecha_publicacion"] is None or sumario["numero_bop"] is None:
-        resultado["errores"].append("No se pudo identificar fecha/número del boletín mostrado")
-        return resultado
-    if hasta is not None:
-        fecha_esperada = hasta.strftime("%d/%m/%Y")
-        if sumario["fecha_publicacion"] != fecha_esperada:
-            resultado["errores"].append(
-                f"El portal muestra {sumario['fecha_publicacion']!r}, no la fecha solicitada {fecha_esperada!r}"
-            )
-            return resultado
-    resultado["muestra_extraida"] = [
-        {"organismo": x["organismo"], "titulo": x["titulo"], "referencia": x["referencia"]}
-        for x in sumario["anuncios"]
-    ]
-    candidatos = []
-    for anuncio in sumario["anuncios"]:
-        ambito = clasificar_ambito_administrativo({
-            "denominacion": anuncio["titulo"],
-            "cuerpo_escala": None,
-            "grupo": None,
-        })
-        if ambito != "SI":
-            continue
-        item = dict(anuncio)
-        item["ambito_administrativo"] = ambito
-        item["clase"] = _clasificar_anuncio(item["titulo"])
-        candidatos.append(item)
-
-    from collections import Counter
-    conteo = Counter(x["clase"] for x in candidatos)
-    resultado["descubiertos"] = len(sumario["anuncios"])
-    resultado["administrativos"] = len(candidatos)
-    resultado["revision"] = conteo.get("REVISION", 0)
-    resultado["resumen_clases"] = dict(sorted(conteo.items()))
-    resultado["detalle"] = candidatos
-    return resultado
