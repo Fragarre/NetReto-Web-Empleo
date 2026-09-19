@@ -13,6 +13,7 @@ import httpx
 from bs4 import BeautifulSoup
 from psycopg.types.json import Jsonb
 
+from .ambito_administrativo import clasificar_ambito_administrativo
 from .database import get_connection
 
 RSS_URL = "https://sede.diputacionalicante.es/rssoposiciondipu/"
@@ -193,7 +194,14 @@ def parsear_detalle(url: str, rss_title: str, html: str) -> dict[str, Any]:
     tiene_promocion_interna = "promocion interna" in texto_clave
     turno = "TURNO_LIBRE" if tiene_turno_libre else ("PROMOCION_INTERNA" if tiene_promocion_interna else None)
     es_exclusivo_interno = tiene_promocion_interna and not tiene_turno_libre
-    es_oportunidad = not es_exclusivo_interno and not any(_sin_acentos(x) in texto_clave for x in EXCLUIDOS)
+    es_perfil_administrativo = clasificar_ambito_administrativo({
+        "denominacion": titulo,
+        "cuerpo_escala": None,
+        "grupo": None,
+    }) == "SI"
+    es_oportunidad = es_perfil_administrativo and not es_exclusivo_interno and not any(
+        _sin_acentos(x) in texto_clave for x in EXCLUIDOS
+    )
 
     anio = None
     m_anio = re.search(r"convocatoria\s+(?:\w+\s+)?(20\d{2})", _sin_acentos(rss_title), re.I)
