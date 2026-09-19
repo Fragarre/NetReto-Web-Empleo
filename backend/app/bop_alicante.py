@@ -7,12 +7,14 @@ from datetime import date, timedelta
 from typing import Any
 
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from xml.sax.saxutils import escape
 
 import httpx
 
 from .ambito_administrativo import clasificar_ambito_administrativo
 from .database import get_connection
+from .organismos import resolver_fuente, resolver_organismo
 from .bop_valencia_municipios import (
     _clasificar_anuncio,
     _es_seguimiento_selectivo_claro,
@@ -295,4 +297,198 @@ def preparar_importacion_bop_alicante(
             })
 
         connection.rollback()
+    return resultado
+
+
+def importar_bop_alicante(
+    *,
+    dias_solape: int = 7,
+    hasta: date | None = None,
+    max_items: int = 500,
+    aplicar: bool = False,
+) -> dict[str, Any]:
+    """Importación idempotente del BOP Alicante; por defecto solo revisión."""
+    if not aplicar:
+        return preparar_importacion_bop_alicante(
+            dias_solape=dias_solape,
+            hasta=hasta,
+            max_items=max_items,
+        )
+
+    revision = consultar_bop_alicante(
+        dias_solape=dias_solape,
+        hasta=hasta,
+        max_items=max_items,
+    )
+    if revision["errores"]:
+        return {
+            "modo": "APLICAR",
+            "errores": revision["errores"],
+            "nuevas": 0,
+            "existentes": 0,
+            "publicaciones": 0,
+            "seguimientos_vinculados": 0,
+            "seguimientos_revision": 0,
+            "organismos_creados": 0,
+            "detalle": [],
+        }
+
+    resultado: dict[str, Any] = {
+        "modo": "APLICAR",
+        "nuevas": 0,
+        "existentes": 0,
+        "publicaciones": 0,
+        "seguimientos_vinculados": 0,
+        "seguimientos_revision": 0,
+        "organismos_creados": 0,
+        "errores": [],
+        "detalle": [],
+    }
+
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        # Debe existir previamente como identidad funcional autorizada.
+        # No se crea aquí ninguna fuente productiva de forma implícita.
+        fuente = resolver_fuente(
+            cursor,
+            nombre="Boletín Oficial de la Provincia de Alicante",
+            tipo="BOP",
+        )
+        fuente_id = fuente["id"]
+
+        for hallazgo in revision["detalle"]:
+            clase = hallazgo["clase"]
+            if clase not in ("NUEVA_CONVOCATORIA", "SEGUIMIENTO"):
+                continue
+
+            fecha_publicacion = _fecha_bop(hallazgo.get("fecha_publicacion"))
+            if fecha_publicacion is None:
+                resultado["seguimientos_revision"] += 1
+                resultado["detalle"].append({
+                    "referencia": hallazgo["referencia"],
+                    "clase": clase,
+                    "estado": "REVISION",
+                    "motivo": "FECHA_INVALIDA",
+                })
+                continue
+
+            if clase == "SEGUIMIENTO":
+                cursor.execute(
+                    """
+                    SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
+                    FROM procesos p
+                    JOIN organismos o ON o.id=p.organismo_id
+                    WHERE o.tipo='AYUNTAMIENTO'
+                      AND LOWER(COALESCE(o.provincia,''))='alicante'
+                      AND p.ambito_administrativo='SI'
+                      AND p.estado='EN_CURSO'
+                      AND p.fecha_convocatoria IS NOT NULL
+                      AND p.fecha_convocatoria <= %s
+                    ORDER BY p.fecha_convocatoria DESC,p.id DESC
+                    """,
+                    (fecha_publicacion,),
+                )
+                proceso, motivo = seleccionar_proceso_seguimiento(hallazgo, list(cursor.fetchall()))
+                if not proceso:
+                    resultado["seguimientos_revision"] += 1
+                    resultado["detalle"].append({
+                        "referencia": hallazgo["referencia"],
+                        "clase": clase,
+                        "estado": "REVISION",
+                        "motivo": motivo,
+                    })
+                    continue
+                proceso_id = proceso["id"]
+                resultado["seguimientos_vinculados"] += 1
+            else:
+                cursor.execute(
+                    "SELECT id FROM procesos WHERE identificador_estable=%s",
+                    (hallazgo["referencia"],),
+                )
+                existente = cursor.fetchone()
+                if existente:
+                    proceso_id = existente["id"]
+                    resultado["existentes"] += 1
+                else:
+                    municipio = hallazgo["denominacion"]
+                    org = resolver_organismo(
+                        cursor,
+                        tipo="AYUNTAMIENTO",
+                        provincia="Alicante",
+                        municipio=municipio,
+                    )
+                    if org is None:
+                        nombre = f"Ayuntamiento de {municipio}"
+                        cursor.execute(
+                            """
+                            INSERT INTO organismos
+                                (nombre,tipo,municipio,provincia,activo,created_at,updated_at)
+                            VALUES (%s,'AYUNTAMIENTO',%s,'Alicante',TRUE,NOW(),NOW())
+                            RETURNING id
+                            """,
+                            (nombre, municipio),
+                        )
+                        organismo_id = cursor.fetchone()["id"]
+                        resultado["organismos_creados"] += 1
+                    else:
+                        organismo_id = org["id"]
+
+                    cursor.execute(
+                        """
+                        INSERT INTO procesos
+                            (organismo_id,codigo_externo,identificador_estable,denominacion,
+                             estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,
+                             ambito_administrativo,datos_json,updated_at)
+                        VALUES (%s,%s,%s,%s,'EN_CURSO',%s,%s,TRUE,'SI',%s,NOW())
+                        RETURNING id
+                        """,
+                        (
+                            organismo_id,
+                            hallazgo["edicto"],
+                            hallazgo["referencia"],
+                            hallazgo["extracto"],
+                            fecha_publicacion,
+                            fuente_id,
+                            Jsonb({
+                                "url_oficial": hallazgo["url_documento"],
+                                "bop_referencia": hallazgo["referencia"],
+                                "origen": "BOP_ALICANTE",
+                            }),
+                        ),
+                    )
+                    proceso_id = cursor.fetchone()["id"]
+                    resultado["nuevas"] += 1
+
+            cursor.execute(
+                "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
+                (fuente_id, hallazgo["referencia"]),
+            )
+            publicacion = cursor.fetchone()
+            if publicacion is None:
+                cursor.execute(
+                    """
+                    INSERT INTO publicaciones
+                        (proceso_id,fuente_id,referencia,tipo,titulo,fecha_publicacion,
+                         url,datos_json,detectada_at)
+                    VALUES (%s,%s,%s,'BOP',%s,%s,%s,%s,NOW())
+                    """,
+                    (
+                        proceso_id,
+                        fuente_id,
+                        hallazgo["referencia"],
+                        hallazgo["extracto"],
+                        fecha_publicacion,
+                        hallazgo["url_documento"],
+                        Jsonb({"origen": "BOP_ALICANTE", "clase": clase}),
+                    ),
+                )
+                resultado["publicaciones"] += 1
+
+            resultado["detalle"].append({
+                "referencia": hallazgo["referencia"],
+                "clase": clase,
+                "estado": "VINCULADO" if clase == "SEGUIMIENTO" else "IMPORTADO",
+                "proceso_id": proceso_id,
+            })
+
+        connection.commit()
     return resultado
