@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 
 from .database import get_connection
 from .estado_proceso import clasificar_evento_terminal
-from .gva_estatal_persist import _resolver_fuente_dogv
+from .gva_estatal_persist import _resolver_identidad_gva
 from .gva_estatal_seguimiento import (
     ESTADOS_TERMINALES,
     _obtener_html,
@@ -174,7 +174,7 @@ def actualizar_bolsas_gva_simplificadas(*, aplicar: bool = False) -> dict[str, A
     baseline_creados = 0
     procesos_finalizados = 0
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        fuente_dogv_id = _resolver_fuente_dogv(cursor)
+        _, fuente_dogv_id = _resolver_identidad_gva(cursor)
         for accion in plan["acciones"]:
             if accion["accion"] == "SIN_CAMBIOS":
                 continue
