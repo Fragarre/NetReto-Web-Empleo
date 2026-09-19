@@ -44,7 +44,8 @@ def resolver_fuente(
         """,
         tuple(params),
     )
-    rows = cursor.fetchall()
+    columns = [description.name for description in cursor.description]
+    rows = [row if isinstance(row, dict) else dict(zip(columns, row)) for row in cursor.fetchall()]
     if len(rows) != 1:
         estado = "no encontrada" if not rows else "ambigua"
         raise RuntimeError(f"Fuente {estado}: {nombre!r} / {tipo!r}")
@@ -74,8 +75,9 @@ def resolver_organismo(
     provincia_norm = _normalizar_identidad(provincia)
     municipio_norm = _normalizar_identidad(municipio)
     nombre_norm = _normalizar_identidad(nombre)
+    columns = [description.name for description in cursor.description]
     for row in cursor.fetchall():
-        item = dict(row)
+        item = row if isinstance(row, dict) else dict(zip(columns, row))
         if solo_activo and not item["activo"]:
             continue
         if _normalizar_identidad(item.get("provincia")) != provincia_norm:
