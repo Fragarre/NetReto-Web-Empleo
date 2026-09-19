@@ -3,12 +3,12 @@ from app.bop_alicante import seleccionar_proceso_seguimiento
 
 def _hallazgo():
     return {
-        "extracto": "ACUMULACIÓN PLAZAS DE ADMINISTRATIVO A CONVOCATORIA BOP 27/2026",
+        "extracto": "ACUMULACIÓN DE PLAZAS DE ADMINISTRATIVO",
         "denominacion": "Alcoy/Alcoi",
     }
 
 
-def _candidato(id_, municipio="Alcoy/Alcoi", denominacion="Administrativo convocatoria BOP 27/2026"):
+def _candidato(id_, municipio="Alcoy/Alcoi", denominacion="Administrativo"):
     return {"id": id_, "municipio": municipio, "denominacion": denominacion}
 
 
