@@ -323,6 +323,39 @@ def _identidad_organismo(organismo: str | None) -> dict[str, str | None]:
     return {"tipo": "DESCONOCIDO", "provincia": "Castellón", "municipio": None}
 
 
+def preparar_revision_castellon(
+    *,
+    desde: date | None = None,
+    hasta: date | None = None,
+) -> dict[str, Any]:
+    """Expone el plan de identidad institucional sin consultar ni modificar BD."""
+    revision = consultar_bop_castellon(desde=desde, hasta=hasta)
+    detalle = []
+    for hallazgo in revision["detalle"]:
+        if hallazgo["clase"] not in ("NUEVA_CONVOCATORIA", "SEGUIMIENTO"):
+            continue
+        identidad = _identidad_organismo(hallazgo.get("organismo"))
+        detalle.append({
+            "referencia": hallazgo["referencia"],
+            "clase": hallazgo["clase"],
+            "titulo": hallazgo["titulo"],
+            "organismo_fuente": hallazgo.get("organismo"),
+            "organismo": identidad,
+            "persistencia_automatica": (
+                hallazgo["clase"] == "NUEVA_CONVOCATORIA"
+                and identidad["tipo"] in ("AYUNTAMIENTO", "DIPUTACION")
+            ),
+        })
+    return {
+        "modo": "SOLO_REVISION_IDENTIDAD",
+        "fuente": revision["fuente"],
+        "desde": revision["desde"],
+        "hasta": revision["hasta"],
+        "errores": list(revision["errores"]),
+        "detalle": detalle,
+    }
+
+
 def preparar_importacion_bop_castellon(
     *,
     desde: date | None = None,
