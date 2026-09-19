@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Any
-from urllib.parse import quote
+from xml.sax.saxutils import escape
 
 import httpx
 
@@ -22,22 +22,16 @@ def _valor(registro: dict[str, Any], campo: str) -> str:
 
 
 def _param(desde: date, hasta: date) -> str:
-    # Contrato observado en la consulta oficial BOP_EDI.
-    campos = {
-        "Registro": "",
-        "Desde": desde.strftime("%d/%m/%Y"),
-        "DesdeHasta": hasta.strftime("%d/%m/%Y"),
-        "Hasta": "",
-        "texto": "",
-        "tiporganismo": "",
-        "publicante": "",
-        "publicante2": "",
-        "registr0": "",
-        "Entrada": "",
-        "Raiz": "",
-        "usuario": "-",
-    }
-    return "&".join(f"{k}={v}" for k, v in campos.items())
+    # Contrato real observado en DevTools: param es XML.
+    return (
+        "<Raiz><entrada><Registro>"
+        f"<desde>{escape(desde.strftime('%d/%m/%Y'))}</desde>"
+        f"<hasta>{escape(hasta.strftime('%d/%m/%Y'))}</hasta>"
+        "<texto></texto>"
+        "<tipoorganismo></tipoorganismo>"
+        "<publicante></publicante>"
+        "</Registro></entrada></Raiz>"
+    )
 
 
 def _normalizar(registro: dict[str, Any]) -> dict[str, Any]:
@@ -96,7 +90,7 @@ def consultar_bop_alicante(
             follow_redirects=True,
             headers={"User-Agent": "TuCoach-Empleo/1.0", "Accept": "application/json"},
         ) as client:
-            respuesta = client.get(ENDPOINT, params={"nemo": "BOP_EDI", "param": _param(desde, hasta)})
+            respuesta = client.get(ENDPOINT, params={"nemo": "BOP_EDI", "param": _param(desde, hasta), "usuario": "-"})
             respuesta.raise_for_status()
             payload = respuesta.json()
     except Exception as exc:
