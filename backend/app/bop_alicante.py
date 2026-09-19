@@ -10,7 +10,13 @@ from xml.sax.saxutils import escape
 import httpx
 
 from .ambito_administrativo import clasificar_ambito_administrativo
-from .bop_valencia_municipios import _clasificar_anuncio
+from .bop_valencia_municipios import (
+    _clasificar_anuncio,
+    _es_seguimiento_selectivo_claro,
+    _extraer_codigo_proceso,
+    _familia_perfil,
+    _sin as _sin_valencia,
+)
 
 ENDPOINT = (
     "https://sede.diputacionalicante.es/wp-content/themes/"
@@ -76,6 +82,47 @@ def _sin(texto: str) -> str:
 
 def _es_candidato_empleo(registro: dict[str, Any]) -> bool:
     return registro.get("ambito_administrativo") == "SI"
+
+
+def seleccionar_proceso_seguimiento(
+    hallazgo: dict[str, Any],
+    candidatos: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str]:
+    """Matching conservador puro, equivalente al patrón BOP Valencia.
+
+    No accede a BD: recibe candidatos ya obtenidos por la capa de persistencia.
+    """
+    familia = _familia_perfil(hallazgo.get("extracto") or "")
+    if not familia:
+        return None, "SIN_FAMILIA"
+    if not _es_seguimiento_selectivo_claro(hallazgo.get("extracto") or ""):
+        return None, "NO_ES_CONTINUIDAD_SELECTIVA"
+
+    municipio = _sin_valencia(hallazgo.get("denominacion") or "")
+    codigo = _extraer_codigo_proceso(hallazgo.get("extracto") or "")
+    compatibles = [
+        p for p in candidatos
+        if _sin_valencia(p.get("municipio") or "") == municipio
+        and _familia_perfil(p.get("denominacion") or "") == familia
+    ]
+    if not compatibles:
+        return None, "SIN_COINCIDENCIA"
+
+    if codigo:
+        por_codigo = [
+            p for p in compatibles
+            if _extraer_codigo_proceso(p.get("denominacion") or "") == codigo
+        ]
+        if len(por_codigo) == 1:
+            return por_codigo[0], "CODIGO_EXACTO"
+        if len(por_codigo) > 1:
+            return None, "CODIGO_AMBIGUO"
+        return None, "CODIGO_SIN_COINCIDENCIA"
+
+    if len(compatibles) == 1:
+        return compatibles[0], "UNICO_HITO_SELECTIVO"
+    return None, "AMBIGUO_SIN_CODIGO"
+
 
 def consultar_bop_alicante(
     *,
