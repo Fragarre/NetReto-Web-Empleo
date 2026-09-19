@@ -84,7 +84,6 @@ def _candidatos_bop(
         WHERE organismo_id=%s
           AND ambito_administrativo='SI'
           AND fecha_convocatoria=%s
-          AND identificador_estable LIKE 'BOPMUN:%%'
         ORDER BY id
         """,
         (organismo_id, fecha_bases),
