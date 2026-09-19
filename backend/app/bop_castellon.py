@@ -63,12 +63,27 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
                 siguiente = siguiente.find_next()
             if not titulo:
                 continue
+            # El portal agrupa cada anuncio con su organismo en un mismo
+            # contenedor: titulo2 para Diputación y titulo3 para ayuntamientos.
+            # Preferimos esa relación explícita del DOM al estado acumulado
+            # del recorrido, conservando este último solo como respaldo.
+            organismo_anuncio = organismo
+            contenedor = enlace.find_parent("div")
+            if contenedor is not None:
+                cabecera = contenedor.find(
+                    "span",
+                    class_=lambda clases: clases
+                    and ("titulo2" in clases.split() or "titulo3" in clases.split()),
+                )
+                if cabecera is not None:
+                    organismo_anuncio = _texto(cabecera)
+
             anuncios.append({
                 "id_anuncio": mid.group(1),
                 "referencia": f"BOPCS:{mid.group(1)}",
                 "numero_bop": numero,
                 "fecha_publicacion": fecha,
-                "organismo": organismo,
+                "organismo": organismo_anuncio,
                 "titulo": titulo,
                 "url_documento": str(httpx.URL(DESCARGA).copy_add_param("idAnuncio", mid.group(1)).copy_add_param("idioma", "es")),
             })
