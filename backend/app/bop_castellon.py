@@ -41,17 +41,18 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
             mid = re.search(r"idAnuncio=(\d+)", href)
             if not mid:
                 continue
-            # El enlace solo contiene "ui-button". En el sumario, el título
-            # es el texto inmediatamente posterior al botón de descarga.
+            # El enlace solo contiene "ui-button". El título está en el
+            # siguiente elemento del DOM, no necesariamente como hermano directo.
             titulo = ""
-            for hermano in enlace.next_siblings:
-                if isinstance(hermano, str):
-                    candidato = " ".join(hermano.split())
-                else:
-                    candidato = _texto(hermano)
+            siguiente = enlace.find_next()
+            while siguiente is not None:
+                if siguiente.name == "a" and siguiente.get("href") and "descargarAnuncio" in siguiente.get("href"):
+                    break
+                candidato = _texto(siguiente)
                 if candidato and candidato != "ui-button":
                     titulo = candidato
                     break
+                siguiente = siguiente.find_next()
             if not titulo:
                 continue
             anuncios.append({
