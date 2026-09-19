@@ -114,3 +114,4 @@ def test_resolver_organismo_sin_coincidencia_no_inventa():
         provincia="Castellón",
         municipio="Segorbe",
     ) is None
+\n\ndef test_resolver_fuente_acepta_fila_psycopg_posicional():\n    cursor = CursorFalso([(27, 2, "Boletín Oficial de la Provincia de Valencia", "BOP", "https://ejemplo.invalid", 10, True)])\n    fuente = resolver_fuente(cursor, nombre="Boletín Oficial de la Provincia de Valencia", tipo="BOP", organismo_id=2)\n    assert fuente["id"] == 27\n    assert fuente["organismo_id"] == 2\n\n\ndef test_resolver_organismo_acepta_fila_psycopg_posicional():\n    cursor = CursorFalso([(4, "Diputación Provincial de Valencia", "DIPUTACION", "Valencia", None, True)])\n    organismo = resolver_organismo(cursor, tipo="DIPUTACION", provincia="Valencia", nombre="Diputación Provincial de Valencia")\n    assert organismo is not None\n    assert organismo["id"] == 4\n
