@@ -24,13 +24,13 @@ def _valor(registro: dict[str, Any], campo: str) -> str:
 def _param(desde: date, hasta: date) -> str:
     # Contrato real observado en DevTools: param es XML.
     return (
-        "<Raiz><entrada><Registro>"
+        "<raiz><entrada><registro>"
         f"<desde>{escape(desde.strftime('%d/%m/%Y'))}</desde>"
         f"<hasta>{escape(hasta.strftime('%d/%m/%Y'))}</hasta>"
         "<texto></texto>"
-        "<tipoorganismo></tipoorganismo>"
+        "<tipoorganismo>4</tipoorganismo>"
         "<publicante></publicante>"
-        "</Registro></entrada></Raiz>"
+        "</registro></entrada></raiz>"
     )
 
 
