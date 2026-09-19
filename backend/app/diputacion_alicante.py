@@ -11,10 +11,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from psycopg.types.json import Jsonb
-
 from .ambito_administrativo import clasificar_ambito_administrativo
-from .database import get_connection
 
 RSS_URL = "https://sede.diputacionalicante.es/rssoposiciondipu/"
 SEGUIMIENTO_URL = "https://sede.diputacionalicante.es/oposiciones-diputacion/"
@@ -292,83 +289,23 @@ def _buscar_proceso_candidato(cursor, datos: dict[str, Any], *, organismo_id: in
     return None, "AMBIGUO"
 
 
-def _upsert(cursor, datos: dict[str, Any], *, organismo_id: int, fuente_id: int) -> tuple[int, bool]:
-    cursor.execute(
-        """
-        INSERT INTO procesos (
-            organismo_id, codigo_externo, identificador_estable, denominacion,
-            grupo, tipo_proceso, sistema_selectivo, turno, plazas, estado,
-            es_oportunidad, anio_convocatoria, fecha_apertura, fecha_cierre,
-            ultima_publicacion_at, fuente_principal_id, datos_json, updated_at
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
-        ON CONFLICT (identificador_estable) DO UPDATE SET
-            denominacion=EXCLUDED.denominacion,
-            grupo=COALESCE(EXCLUDED.grupo, procesos.grupo),
-            tipo_proceso=COALESCE(EXCLUDED.tipo_proceso, procesos.tipo_proceso),
-            sistema_selectivo=COALESCE(EXCLUDED.sistema_selectivo, procesos.sistema_selectivo),
-            turno=COALESCE(EXCLUDED.turno, procesos.turno),
-            plazas=COALESCE(EXCLUDED.plazas, procesos.plazas),
-            estado=EXCLUDED.estado,
-            es_oportunidad=EXCLUDED.es_oportunidad,
-            anio_convocatoria=COALESCE(EXCLUDED.anio_convocatoria, procesos.anio_convocatoria),
-            fecha_apertura=COALESCE(EXCLUDED.fecha_apertura, procesos.fecha_apertura),
-            fecha_cierre=COALESCE(EXCLUDED.fecha_cierre, procesos.fecha_cierre),
-            ultima_publicacion_at=EXCLUDED.ultima_publicacion_at,
-            datos_json=EXCLUDED.datos_json,
-            updated_at=NOW()
-        RETURNING id, (xmax = 0) AS inserted
-        """,
-        (
-            organismo_id, datos["codigo_externo"], datos["identificador_estable"], datos["denominacion"],
-            datos["grupo"], datos["tipo_proceso"], datos["sistema_selectivo"], datos["turno"], datos["plazas"],
-            datos["estado"], datos["es_oportunidad"], datos["anio_convocatoria"], datos["fecha_apertura"],
-            datos["fecha_cierre"], datos["ultima_publicacion_at"], fuente_id, Jsonb(datos["datos_json"]),
-        ),
-    )
-    row = cursor.fetchone()
-    return int(row[0]), bool(row[1])
-
-
-def _insertar_publicacion(cursor, proceso_id: int, pub: dict[str, Any], *, fuente_id: int) -> bool:
-    cursor.execute(
-        "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
-        (fuente_id, pub["referencia"]),
-    )
-    if cursor.fetchone() is not None:
-        return False
-
-    cursor.execute(
-        """
-        INSERT INTO publicaciones (
-            proceso_id, fuente_id, referencia, tipo, titulo,
-            fecha_publicacion, url, contenido_hash, contenido_texto, datos_json
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        RETURNING id
-        """,
-        (
-            proceso_id, fuente_id, pub["referencia"], pub["tipo"], pub["titulo"],
-            pub["fecha_publicacion"], pub["url"], pub["contenido_hash"],
-            pub["contenido_texto"], Jsonb(pub["datos_json"]),
-        ),
-    )
-    publicacion = cursor.fetchone()
-    cursor.execute(
-        """
-        INSERT INTO cambios (
-            proceso_id, publicacion_id, tipo, campo, valor_anterior,
-            valor_nuevo, resumen, significativo
-        ) VALUES (%s,%s,'PUBLICACION','publicacion',NULL,%s,%s,TRUE)
-        """,
-        (proceso_id, publicacion[0], pub["referencia"], f"Nueva publicación oficial: {pub['titulo']}"),
-    )
-    return True
-
-
 def importar_diputacion_alicante(*, max_detalles: int = 100, aplicar: bool = False) -> dict[str, Any]:
+    """Descubre y normaliza Diputación Alicante. La persistencia se habilitará
+    únicamente cuando la identidad funcional de la fuente esté configurada."""
+    if aplicar:
+        raise RuntimeError(
+            "Persistencia de Diputación de Alicante no habilitada: "
+            "identidad funcional pendiente de configuración"
+        )
+
     headers = {"User-Agent": "TuCoach-Empleo/1.0", "Accept-Language": "es-ES,es;q=0.9"}
     estadisticas: dict[str, Any] = {
-        "modo": "APLICAR" if aplicar else "SOLO_REVISION",
-        "descubiertos": 0, "procesos": 0, "publicaciones": 0, "cambios": 0, "errores": 0,
+        "modo": "SOLO_REVISION",
+        "descubiertos": 0,
+        "procesos": 0,
+        "publicaciones": 0,
+        "cambios": 0,
+        "errores": 0,
         "errores_detalle": [],
     }
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
@@ -377,65 +314,22 @@ def importar_diputacion_alicante(*, max_detalles: int = 100, aplicar: bool = Fal
         enlaces = _parse_rss(rss.content)[:max_detalles]
         estadisticas["descubiertos"] = len(enlaces)
 
-        if not aplicar:
-            for title, url, rss_date in enlaces:
-                try:
-                    respuesta = client.get(url)
-                    respuesta.raise_for_status()
-                    datos = parsear_detalle(url, title, respuesta.text)
-                    estadisticas["procesos"] += 1
-                    estadisticas["publicaciones"] += 1 + len(datos["seguimiento"])
-                except Exception as exc:
-                    estadisticas["errores"] += 1
-                    errores = estadisticas["errores_detalle"]
-                    if len(errores) < 10:
-                        errores.append({
-                            "codigo": _codigo(url, title),
-                            "url": url,
-                            "error": f"{type(exc).__name__}: {exc}",
-                        })
-            return estadisticas
-
-        # La identidad productiva de Alicante debe resolverse/configurarse antes de persistir.
-        # SOLO_REVISION permanece operativo y no accede a la BD.
-        raise RuntimeError("Persistencia de Diputación de Alicante no habilitada: identidad funcional pendiente de configuración")
-
-        with get_connection() as connection:
-            with connection.cursor() as cursor:
-                for title, url, rss_date in enlaces:
-                    try:
-                        respuesta = client.get(url)
-                        respuesta.raise_for_status()
-                        datos = parsear_detalle(url, title, respuesta.text)
-                        proceso_id, inserted = _upsert(cursor, datos)
-                        if inserted:
-                            estadisticas["procesos"] += 1
-
-                        pub = datos["publicacion"]
-                        if _insertar_publicacion(cursor, proceso_id, {
-                            **pub,
-                            "fecha_publicacion": rss_date or date.today(),
-                        }):
-                            estadisticas["publicaciones"] += 1
-                            estadisticas["cambios"] += 1
-
-                        for hito in datos["seguimiento"]:
-                            if _insertar_publicacion(cursor, proceso_id, hito):
-                                estadisticas["publicaciones"] += 1
-                                estadisticas["cambios"] += 1
-                    except Exception as exc:
-                        estadisticas["errores"] += 1
-                        errores = estadisticas["errores_detalle"]
-                        if len(errores) < 10:
-                            errores.append({
-                                "codigo": _codigo(url, title),
-                                "url": url,
-                                "error": f"{type(exc).__name__}: {exc}",
-                            })
-                        connection.rollback()
-                        cursor.close()
-                        cursor = connection.cursor()
-            connection.commit()
+        for title, url, rss_date in enlaces:
+            try:
+                respuesta = client.get(url)
+                respuesta.raise_for_status()
+                datos = parsear_detalle(url, title, respuesta.text)
+                estadisticas["procesos"] += 1
+                estadisticas["publicaciones"] += 1 + len(datos["seguimiento"])
+            except Exception as exc:
+                estadisticas["errores"] += 1
+                errores = estadisticas["errores_detalle"]
+                if len(errores) < 10:
+                    errores.append({
+                        "codigo": _codigo(url, title),
+                        "url": url,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
     return estadisticas
 
 def diagnosticar_diputacion_alicante() -> dict[str, Any]:
