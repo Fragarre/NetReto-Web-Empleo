@@ -63,20 +63,22 @@ def _extraer_sumario(html: str) -> dict[str, Any]:
                 siguiente = siguiente.find_next()
             if not titulo:
                 continue
-            # El portal agrupa cada anuncio con su organismo en un mismo
-            # contenedor: titulo2 para Diputación y titulo3 para ayuntamientos.
-            # Preferimos esa relación explícita del DOM al estado acumulado
-            # del recorrido, conservando este último solo como respaldo.
+            # El organismo válido es la cabecera estructural más próxima
+            # al enlace dentro de su cadena de contenedores. Un div exterior
+            # puede contener un titulo2 (Diputación) y varios titulo3
+            # municipales, por lo que no debemos tomar la primera cabecera
+            # de un ancestro amplio.
             organismo_anuncio = organismo
-            contenedor = enlace.find_parent("div")
-            if contenedor is not None:
-                cabecera = contenedor.find(
+            for contenedor in enlace.find_parents("div"):
+                cabeceras = contenedor.find_all(
                     "span",
                     class_=lambda clases: clases
                     and ("titulo2" in clases.split() or "titulo3" in clases.split()),
+                    recursive=False,
                 )
-                if cabecera is not None:
-                    organismo_anuncio = _texto(cabecera)
+                if cabeceras:
+                    organismo_anuncio = _texto(cabeceras[0])
+                    break
 
             anuncios.append({
                 "id_anuncio": mid.group(1),
