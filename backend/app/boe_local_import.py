@@ -403,6 +403,19 @@ def recuperar_boe_para_proceso_bop(
                 "modo": "APLICADO" if aplicar else "SOLO_REVISION",
                 "estado": "SIN_COINCIDENCIA" if not candidatos else "REVISION_SOLAPAMIENTO",
                 "candidatos": len(candidatos),
+                "candidatos_detalle": [
+                    {
+                        "codigo_externo": candidato.get("codigo_externo"),
+                        "boe_id": candidato.get("boe_id"),
+                        "fecha_boe": candidato.get("fecha_boe"),
+                        "entidad": candidato.get("entidad"),
+                        "denominacion": candidato.get("denominacion"),
+                        "plazas": candidato.get("plazas"),
+                        "bases_bop": candidato.get("bases_bop"),
+                        "plazo_solicitudes_literal": candidato.get("plazo_solicitudes_literal"),
+                    }
+                    for candidato in candidatos
+                ],
                 "dias_revisados": dias,
                 "errores": extraccion["errores"],
             }
