@@ -57,6 +57,22 @@ def test_fuente_real_solo_lectura():
     respuesta.raise_for_status()
     filas = _parse_listado(respuesta.text)
 
+    # Diagnóstico temporal de la estructura HTML real: cabeceras y una fila administrativa.
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(respuesta.text, "html.parser")
+    for tr in soup.find_all("tr"):
+        textos = [" ".join(celda.get_text(" ", strip=True).split()) for celda in tr.find_all(["th", "td"])]
+        if textos and ("Plaza" in textos or "Entidad" in textos):
+            print("ALICANTE_HTML_CABECERAS", repr(textos))
+            break
+    for tr in soup.find_all("tr"):
+        textos = [" ".join(celda.get_text(" ", strip=True).split()) for celda in tr.find_all("td")]
+        if textos and any("Administr" in texto for texto in textos):
+            enlaces = [(a.get_text(" ", strip=True), a.get("href")) for a in tr.find_all("a", href=True)]
+            print("ALICANTE_HTML_FILA", repr(textos))
+            print("ALICANTE_HTML_ENLACES", repr(enlaces))
+            break
+
     assert filas
     assert any(x["ambito_administrativo"] == "SI" for x in filas)
     assert all("estado_revision" in x for x in filas)
