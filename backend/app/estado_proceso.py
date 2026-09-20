@@ -71,13 +71,6 @@ _FESTIVOS_CV: dict[int, set[date]] = {
     }
 }
 
-# Fiestas locales verificadas. Solo se ofrece fecha de cierre calculada cuando
-# conocemos también el calendario local del organismo; en los demás casos se
-# conserva el plazo literal para evitar una falsa precisión.
-_FESTIVOS_LOCALES: dict[tuple[int, str], set[date]] = {
-    (2026, "ayuntamiento de benavites"): {date(2026, 3, 18), date(2026, 4, 13)},
-}
-
 
 def es_bolsa(tipo_proceso: str | None) -> bool:
     return "bolsa" in _sin(tipo_proceso) or "borsa" in _sin(tipo_proceso)
@@ -111,14 +104,14 @@ def _dias_habiles_literal(literal: str) -> int | None:
 
 
 def _calcular_cierre_habiles(fecha_boe: date, dias: int, organismo: str | None) -> date | None:
-    """Calcula el último día solo con calendario autonómico y local verificados."""
+    """Calcula el último día con fines de semana y festivos estatales/autonómicos CV.
+
+    No incorpora festivos locales; el resultado debe mostrarse con advertencia
+    para que el usuario confirme posibles días inhábiles del municipio.
+    """
     if dias <= 0 or fecha_boe.year not in _FESTIVOS_CV:
         return None
-    clave = (fecha_boe.year, _sin(organismo))
-    locales = _FESTIVOS_LOCALES.get(clave)
-    if locales is None:
-        return None
-    festivos = _FESTIVOS_CV[fecha_boe.year] | locales
+    festivos = _FESTIVOS_CV[fecha_boe.year]
     actual = fecha_boe
     contados = 0
     while contados < dias:
@@ -168,6 +161,8 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
                 "fecha_apertura": apertura_calculada,
                 "fecha_cierre": cierre_calculado,
                 "fecha_cierre_calculada": True,
+                "fecha_cierre_sin_festivos_locales": True,
+                "aviso_festivos_locales": "Confirmar fechas en función de días festivos en este municipio",
                 "dias_habiles": dias,
                 "literal": literal,
             }
