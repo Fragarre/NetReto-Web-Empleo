@@ -57,9 +57,18 @@ def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str
             """
             SELECT p.id,p.fecha_convocatoria
             FROM procesos p
+            JOIN organismos o ON o.id=p.organismo_id
             WHERE p.es_oportunidad=TRUE
               AND p.estado='EN_CURSO'
               AND p.ambito_administrativo='SI'
+              AND o.activo=TRUE
+              AND (
+                    (o.tipo='AYUNTAMIENTO' AND LOWER(COALESCE(o.provincia,'')) IN
+                        ('valencia','valència','alicante','castellón','castellon'))
+                    OR
+                    (o.tipo='DIPUTACION' AND LOWER(COALESCE(o.provincia,'')) IN
+                        ('valencia','valència','alicante','castellón','castellon'))
+                  )
               AND p.fecha_convocatoria IS NOT NULL
               AND (
                     p.datos_json->'boe_local' IS NULL
