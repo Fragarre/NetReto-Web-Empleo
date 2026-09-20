@@ -478,16 +478,20 @@ def recuperar_boe_para_proceso_bop(
             }
             for candidato in candidatos
         ]
+        # Las plazas sirven para reconocer un BOE único completo, pero no para
+        # medir la "cobertura" de varios BOE. Un mismo proceso BOP puede publicar
+        # BOE sucesivos con subconjuntos que se solapan (p. ej. turnos o categorías),
+        # por lo que sumar documentos distintos inventaría una magnitud sin garantía.
         plazas_candidatas = sum(
             candidato.get("plazas") or 0
             for candidato in candidatos
             if isinstance(candidato.get("plazas"), int)
         )
         cobertura_completa = (
-            bool(candidatos)
+            len(candidatos) == 1
             and isinstance(proceso.get("plazas"), int)
             and proceso["plazas"] > 0
-            and plazas_candidatas == proceso["plazas"]
+            and candidatos[0].get("plazas") == proceso["plazas"]
         )
         es_agregado = (
             len(candidatos) > 1
