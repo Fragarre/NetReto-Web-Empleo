@@ -51,7 +51,7 @@ def _ejecutar_fuente(funcion: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
 
 
 def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str, Any]:
-    """Busca BOE solo para oportunidades activas BOP ya aceptadas y aún no vinculadas."""
+    """Busca BOE para oportunidades BOP activas sin BOE simple o con seguimiento agregado."""
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -61,7 +61,10 @@ def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str
               AND p.estado='EN_CURSO'
               AND p.ambito_administrativo='SI'
               AND p.fecha_convocatoria IS NOT NULL
-              AND p.datos_json->'boe_local' IS NULL
+              AND (
+                    p.datos_json->'boe_local' IS NULL
+                    OR p.datos_json->'boe_local_agregados' IS NOT NULL
+                  )
               AND p.datos_json->>'origen' IN ('BOP_VALENCIA','BOP_CASTELLON','BOP_ALICANTE')
             ORDER BY p.id
             """
@@ -75,6 +78,8 @@ def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str
         "vinculadas": 0,
         "sin_coincidencia": 0,
         "revision_solapamiento": 0,
+        "agregados": 0,
+        "agregados_actualizados": 0,
         "detalle": [],
     }
     for proceso in pendientes:
@@ -93,6 +98,10 @@ def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str
             resultado["sin_coincidencia"] += 1
         elif estado == "REVISION_SOLAPAMIENTO":
             resultado["revision_solapamiento"] += 1
+        if estado in ("AGREGADO_PARCIAL", "AGREGADO_COMPLETO", "AGREGADO_ACTUALIZADO", "AGREGADO_SIN_CAMBIOS"):
+            resultado["agregados"] += 1
+        if estado == "AGREGADO_ACTUALIZADO":
+            resultado["agregados_actualizados"] += 1
         resultado["detalle"].append({"proceso_id": proceso["id"], **r})
     return resultado
 
@@ -186,18 +195,18 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
     )
 
     registrar(
-        "boe_local",
-        lambda: previsualizar_importacion_boe_local(
+        "boe_pendientes_activos",
+        lambda: _recuperar_boe_pendientes_activos(
             hasta=fecha_hoy,
-            dias=dias_solape,
             aplicar=aplicar,
         ),
     )
 
     registrar(
-        "boe_pendientes_activos",
-        lambda: _recuperar_boe_pendientes_activos(
+        "boe_local",
+        lambda: previsualizar_importacion_boe_local(
             hasta=fecha_hoy,
+            dias=dias_solape,
             aplicar=aplicar,
         ),
     )
