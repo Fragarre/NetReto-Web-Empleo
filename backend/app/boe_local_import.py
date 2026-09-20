@@ -155,6 +155,33 @@ def _fusionar_boe_agregados(
     return [por_id[clave] for clave in orden]
 
 
+def _agrupar_convocatorias_por_boe(convocatorias: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Agrupa las plazas extraídas de un mismo documento BOE sin perder su total."""
+    agrupadas: dict[str, dict[str, Any]] = {}
+    orden: list[str] = []
+    for convocatoria in convocatorias:
+        boe_id = str(convocatoria.get("boe_id") or "").strip()
+        if not boe_id:
+            continue
+        if boe_id not in agrupadas:
+            item = dict(convocatoria)
+            item["denominaciones"] = [convocatoria.get("denominacion")] if convocatoria.get("denominacion") else []
+            agrupadas[boe_id] = item
+            orden.append(boe_id)
+            continue
+        actual = agrupadas[boe_id]
+        plazas_actuales = actual.get("plazas")
+        plazas_nuevas = convocatoria.get("plazas")
+        if isinstance(plazas_actuales, int) and isinstance(plazas_nuevas, int):
+            actual["plazas"] = plazas_actuales + plazas_nuevas
+        elif plazas_actuales is None:
+            actual["plazas"] = plazas_nuevas
+        denominacion = convocatoria.get("denominacion")
+        if denominacion and denominacion not in actual["denominaciones"]:
+            actual["denominaciones"].append(denominacion)
+    return [agrupadas[boe_id] for boe_id in orden]
+
+
 def _insertar_publicacion_boe(cursor, *, fuente_id: int, proceso_id: int, convocatoria: dict[str, Any], codigo: str) -> bool:
     url = convocatoria.get("url_html")
     if not url:
@@ -424,7 +451,7 @@ def recuperar_boe_para_proceso_bop(
         if not proceso:
             return {"modo": "APLICADO" if aplicar else "SOLO_REVISION", "estado": "PROCESO_NO_ENCONTRADO"}
 
-        candidatos_documento: dict[str, dict[str, Any]] = {}
+        convocatorias_coincidentes: list[dict[str, Any]] = []
         for convocatoria in extraccion["detalle"]:
             if convocatoria.get("provincia") != proceso["provincia"]:
                 continue
@@ -432,11 +459,9 @@ def recuperar_boe_para_proceso_bop(
                 continue
             if _sin(proceso["organismo_nombre"]) not in _nombres_entidad(convocatoria.get("entidad")):
                 continue
-            boe_id = convocatoria.get("boe_id")
-            if boe_id:
-                candidatos_documento.setdefault(boe_id, convocatoria)
+            convocatorias_coincidentes.append(convocatoria)
 
-        candidatos = list(candidatos_documento.values())
+        candidatos = _agrupar_convocatorias_por_boe(convocatorias_coincidentes)
         candidatos_detalle = [
             {
                 "codigo_externo": candidato.get("codigo_externo"),
