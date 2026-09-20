@@ -537,6 +537,11 @@ def importar_bop_castellon(
     if resultado["errores"]:
         return resultado
 
+    # Nuevos procesos BOP que, una vez confirmados, deben intentar absorber su BOE.
+    # Se declara también en la ruta APLICAR; la ruta de solo revisión mantiene
+    # su propia colección independiente.
+    recuperaciones_boe: list[tuple[int, date]] = []
+
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         # La fuente productiva debe existir previamente; nunca se crea implícitamente.
         fuente = resolver_fuente(

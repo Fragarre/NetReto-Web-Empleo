@@ -382,8 +382,19 @@ def reconciliar_bases_bop_boe_local(*, aplicar: bool = False) -> dict[str, Any]:
     return stats
 
 
-def _previsualizar_con_bases_bop(*, hasta: date, dias: int = 30, aplicar: bool = False) -> dict[str, Any]:
-    resultado = _BASE_PREVISUALIZAR(hasta=hasta, dias=dias, aplicar=aplicar)
+def _previsualizar_con_bases_bop(
+    *,
+    hasta: date,
+    dias: int = 30,
+    aplicar: bool = False,
+    boe_ids_absorbidos: set[str] | None = None,
+) -> dict[str, Any]:
+    resultado = _BASE_PREVISUALIZAR(
+        hasta=hasta,
+        dias=dias,
+        aplicar=aplicar,
+        boe_ids_absorbidos=boe_ids_absorbidos,
+    )
     resultado["bases_bop"] = reconciliar_bases_bop_boe_local(aplicar=aplicar)
     return resultado
 
