@@ -1,6 +1,6 @@
 from datetime import date
 
-from app.boe_local_import import _buscar_organismo, _candidatos_bop, _insertar_publicacion_boe
+from app.boe_local_import import _buscar_organismo, _candidatos_bop, _familia, _insertar_publicacion_boe
 
 
 def test_buscar_organismo_exige_provincia_correcta():
@@ -134,3 +134,9 @@ def test_envoltura_bases_bop_propaga_boe_absorbidos(monkeypatch):
 
     assert recibidos["boe_ids_absorbidos"] == {"BOE-A-2026-17643"}
     assert resultado["bases_bop"]["modo"] == "SOLO_REVISION"
+
+
+def test_familia_no_confunde_auxiliar_administrativo_con_otras_categorias():
+    assert _familia("Bases Concurso Oposición Libre 9 Plazas Auxiliar Administrativo") == "AUXILIAR_ADMINISTRATIVO"
+    assert _familia("Auxiliar de Recaudación") is None
+    assert _familia("Técnico/a Medio/a de Gestión") == "TECNICO_GESTION"
