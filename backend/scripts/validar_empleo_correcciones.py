@@ -42,8 +42,17 @@ def main() -> int:
     if 'if "/" in nombre:' not in boe or "nombre.split" not in boe:
         raise AssertionError("Falta normalización de variantes oficiales como Benicàssim/Benicasim")
 
-    if "len(candidatos) != 1" not in boe:
-        raise AssertionError("La recuperación BOE no exige coincidencia única")
+    if "candidatos = _agrupar_convocatorias_por_boe(convocatorias_coincidentes)" not in boe:
+        raise AssertionError("La recuperación BOE no agrupa coincidencias por documento BOE")
+
+    if "if not candidatos:" not in boe:
+        raise AssertionError("La recuperación BOE no trata explícitamente la ausencia de coincidencias")
+
+    if "if es_agregado:" not in boe or '"boe_local_agregados"' not in boe:
+        raise AssertionError("La recuperación BOE no conserva coincidencias BOE agregadas")
+
+    if '"estado": "COINCIDENCIA_UNICA"' not in boe:
+        raise AssertionError("La recuperación BOE no conserva el caso inequívoco de documento único")
 
     if "recuperar_boe_para_proceso_bop(" not in castellon:
         raise AssertionError("El alta BOP Castellón no activa la recuperación BOE")
