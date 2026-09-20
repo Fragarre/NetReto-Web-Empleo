@@ -25,4 +25,4 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt pytest
       - name: Ejecutar pruebas Alicante
-        run: pytest -q tests/test_alicante_otras_entidades.py
+        run: PYTHONPATH=. pytest -q tests/test_alicante_otras_entidades.py
