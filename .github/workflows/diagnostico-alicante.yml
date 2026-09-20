@@ -1,0 +1,28 @@
+name: Diagnostico Alicante SOLO_REVISION
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/app/alicante_otras_entidades.py"
+      - "backend/tests/test_alicante_otras_entidades.py"
+      - ".github/workflows/diagnostico-alicante.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Ejecutar pruebas Alicante
+        run: pytest -q tests/test_alicante_otras_entidades.py
