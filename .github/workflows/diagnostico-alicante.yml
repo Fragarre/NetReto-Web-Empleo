@@ -23,6 +23,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
       - name: Ejecutar pruebas Alicante
         run: pytest -q tests/test_alicante_otras_entidades.py
