@@ -10,6 +10,7 @@ def main() -> int:
     cron = (ROOT / "app" / "cron_actualizacion.py").read_text(encoding="utf-8")
     boe = (ROOT / "app" / "boe_local_import.py").read_text(encoding="utf-8")
     castellon = (ROOT / "app" / "bop_castellon.py").read_text(encoding="utf-8")
+    main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
 
     if "fecha.year not in {2026, 2027}" in bop:
         raise AssertionError("Sigue existiendo el límite artificial 2026/2027 en BOP Valencia")
@@ -50,6 +51,11 @@ def main() -> int:
     pos_recuperar = castellon.find("recuperacion = recuperar_boe_para_proceso_bop(", pos_commit)
     if pos_commit < 0 or pos_recuperar < pos_commit:
         raise AssertionError("La recuperación BOE debe ejecutarse después del commit BOP")
+
+    if '@app.post("/admin/import/castellon-boe-backfill")' not in main:
+        raise AssertionError("Falta endpoint controlado para backfill BOE Castellón")
+    if "aplicar: bool = Query(default=False)" not in main:
+        raise AssertionError("El backfill BOE Castellón debe ser SOLO REVISION por defecto")
 
     # Casos funcionales puros sin importar el paquete app (CI mínimo no instala pypdf).
     import ast
