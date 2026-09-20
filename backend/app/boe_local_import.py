@@ -221,7 +221,7 @@ def _insertar_publicacion_boe(cursor, *, fuente_id: int, proceso_id: int, convoc
     return True
 
 
-def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar: bool = False) -> dict[str, Any]:
+def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar: bool = False, boe_ids_absorbidos: set[str] | None = None) -> dict[str, Any]:
     """Previsualiza por defecto; solo inserta o vincula convocatorias inequívocas con aplicar=True."""
     extraccion = extraer_convocatorias_boe_local(hasta=hasta, dias=dias)
     resultado: dict[str, Any] = {
@@ -235,6 +235,7 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
         "excluidas_turno_interno": 0,
         "nuevas": 0,
         "existentes_boe": 0,
+        "absorbidas_bop_revision": 0,
         "posibles_existentes_bop": 0,
         "vinculadas_bop": 0,
         "revision_solapamiento": 0,
@@ -263,6 +264,16 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
 
             codigo = convocatoria["codigo_externo"]
             estable = f"BOELOCAL:{codigo}"
+
+            if not aplicar and convocatoria.get("boe_id") in (boe_ids_absorbidos or set()):
+                resultado["absorbidas_bop_revision"] += 1
+                resultado["detalle"].append({
+                    "codigo_externo": codigo,
+                    "identificador_estable": estable,
+                    "boe_id": convocatoria.get("boe_id"),
+                    "estado_importacion": "ABSORBIDA_BOP_REVISION",
+                })
+                continue
 
             if _es_turno_interno(convocatoria.get("turno")):
                 resultado["excluidas_turno_interno"] += 1
