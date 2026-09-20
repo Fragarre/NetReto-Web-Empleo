@@ -60,3 +60,24 @@ def test_fuente_real_solo_lectura():
     assert filas
     assert any(x["ambito_administrativo"] == "SI" for x in filas)
     assert all("estado_revision" in x for x in filas)
+
+    administrativas = [x for x in filas if x["ambito_administrativo"] == "SI"]
+    candidatas = [x for x in administrativas if x["estado_revision"] == "CANDIDATO_ACTIVO"]
+    terminales = [x for x in administrativas if x["estado_revision"] == "TERMINAL"]
+    excluidas = [x for x in filas if x["ambito_administrativo"] != "SI"]
+
+    print(
+        f"ALICANTE_DIAGNOSTICO total={len(filas)} "
+        f"administrativas={len(administrativas)} "
+        f"candidatas={len(candidatas)} terminales={len(terminales)} "
+        f"excluidas={len(excluidas)}"
+    )
+    for x in (terminales[:3] + candidatas[:5]):
+        print(
+            "ALICANTE_CASO",
+            x.get("estado_revision"),
+            x.get("estado_terminal"),
+            x.get("plaza"),
+            "|",
+            x.get("entidad"),
+        )
