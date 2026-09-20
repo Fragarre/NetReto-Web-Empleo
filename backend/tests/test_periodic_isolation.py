@@ -59,6 +59,22 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
         llamadas.append("municipal")
         return {"marca": "municipal"}
 
+    def castellon(**kwargs):
+        llamadas.append("castellon")
+        return {"marca": "castellon"}
+
+    def otras_alicante(**kwargs):
+        llamadas.append("otras_alicante")
+        return {"marca": "otras_alicante"}
+
+    def alicante(**kwargs):
+        llamadas.append("alicante")
+        return {"marca": "alicante"}
+
+    def pendientes(**kwargs):
+        llamadas.append("pendientes")
+        return {"marca": "pendientes"}
+
     def boe(**kwargs):
         llamadas.append("boe")
         return {"marca": "boe"}
@@ -69,12 +85,25 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
 
     monkeypatch.setattr(periodic, "importar_bop_valencia", bop_falla)
     monkeypatch.setattr(periodic, "importar_municipales_bop", municipal)
+    monkeypatch.setattr(periodic, "importar_bop_castellon", castellon)
+    monkeypatch.setattr(periodic, "bootstrap_otras_entidades_alicante", otras_alicante)
+    monkeypatch.setattr(periodic, "importar_bop_alicante", alicante)
+    monkeypatch.setattr(periodic, "_recuperar_boe_pendientes_activos", pendientes)
     monkeypatch.setattr(periodic, "previsualizar_importacion_boe_local", boe)
     monkeypatch.setattr(periodic, "importar_gva_estatal", gva)
 
     salida = periodic.ejecutar_periodico(aplicar=True, hoy=periodic.date(2026, 9, 18), dias_solape=7)
 
-    assert llamadas == ["bop", "municipal", "boe", "gva"]
+    assert llamadas == [
+        "bop",
+        "municipal",
+        "castellon",
+        "otras_alicante",
+        "alicante",
+        "pendientes",
+        "boe",
+        "gva",
+    ]
     assert salida["fuentes"]["bop_valencia_diputacion"]["error"].startswith("RuntimeError:")
     assert salida["fuentes"]["bop_valencia_municipios"] == {"marca": "municipal"}
     assert salida["fuentes"]["boe_local"] == {"marca": "boe"}
