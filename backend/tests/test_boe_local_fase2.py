@@ -1,3 +1,5 @@
+from datetime import date
+
 from app.boe_local_import import _buscar_organismo, _candidatos_bop, _insertar_publicacion_boe
 
 
@@ -105,3 +107,30 @@ def test_publicacion_boe_se_deduplica_por_boe_id_aunque_cambie_la_fila():
     assert "datos_json->>'boe_id'=%s" in cursor.sql
     assert cursor.params == (1, "BOE-A-2026-17643#2", "BOE-A-2026-17643")
     assert cursor.insert_ejecutado is False
+
+
+def test_envoltura_bases_bop_propaga_boe_absorbidos(monkeypatch):
+    import app.boe_local_bases_bop as bases
+
+    recibidos = {}
+
+    def base(**kwargs):
+        recibidos.update(kwargs)
+        return {"detalle": []}
+
+    monkeypatch.setattr(bases, "_BASE_PREVISUALIZAR", base)
+    monkeypatch.setattr(
+        bases,
+        "reconciliar_bases_bop_boe_local",
+        lambda **kwargs: {"modo": "SOLO_REVISION"},
+    )
+
+    resultado = bases._previsualizar_con_bases_bop(
+        hasta=date(2026, 9, 20),
+        dias=7,
+        aplicar=False,
+        boe_ids_absorbidos={"BOE-A-2026-17643"},
+    )
+
+    assert recibidos["boe_ids_absorbidos"] == {"BOE-A-2026-17643"}
+    assert resultado["bases_bop"]["modo"] == "SOLO_REVISION"
