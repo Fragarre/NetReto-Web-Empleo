@@ -353,9 +353,17 @@ def castellon_boe_backfill_endpoint(
     hasta: date | None = Query(default=None),
     aplicar: bool = Query(default=False),
     x_import_secret: str | None = Header(default=None),
+    x_cron_secret: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Recuperación BOE selectiva; por defecto sólo revisión."""
-    _validar_import_secret(x_import_secret)
+    import_secret = os.getenv("EMPLOYMENT_IMPORT_SECRET")
+    cron_secret = os.getenv("EMPLOYMENT_CRON_SECRET")
+    autorizado = (
+        bool(import_secret and x_import_secret and hmac.compare_digest(x_import_secret, import_secret))
+        or bool(cron_secret and x_cron_secret and hmac.compare_digest(x_cron_secret, cron_secret))
+    )
+    if not autorizado:
+        raise HTTPException(status_code=403, detail="No autorizado")
     try:
         return recuperar_boe_para_proceso_bop(
             proceso_id=proceso_id,
