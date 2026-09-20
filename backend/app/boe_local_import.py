@@ -481,12 +481,19 @@ def recuperar_boe_para_proceso_bop(
             return {"modo": "APLICADO" if aplicar else "SOLO_REVISION", "estado": "PROCESO_NO_ENCONTRADO"}
 
         convocatorias_coincidentes: list[dict[str, Any]] = []
+        familia_proceso = _familia(proceso.get("denominacion"))
         for convocatoria in extraccion["detalle"]:
             if convocatoria.get("provincia") != proceso["provincia"]:
                 continue
             if proceso["fecha_convocatoria"] and (convocatoria.get("bases_bop") or {}).get("fecha") != proceso["fecha_convocatoria"].isoformat():
                 continue
             if _sin(proceso["organismo_nombre"]) not in _nombres_entidad(convocatoria.get("entidad")):
+                continue
+            # Compartir organismo y boletín de bases no basta: una misma edición
+            # del BOP puede contener bases para categorías distintas que después
+            # se convocan en BOE separados. Solo absorbemos filas BOE de la misma
+            # familia administrativa que el proceso BOP.
+            if not familia_proceso or _familia(convocatoria.get("denominacion")) != familia_proceso:
                 continue
             convocatorias_coincidentes.append(convocatoria)
 
