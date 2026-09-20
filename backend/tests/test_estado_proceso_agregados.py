@@ -152,3 +152,15 @@ def test_no_se_infiere_cobertura_sumando_documentos_boe_distintos():
 
     assert total_aritmetico == 14
     assert total_aritmetico != 9
+
+
+def test_oportunidades_bop_sin_boe_quedan_pendientes_de_publicacion():
+    for origen in ("BOP_VALENCIA_MUNICIPAL", "BOP_CASTELLON", "BOP_ALICANTE"):
+        estado = estado_inscripcion(
+            {
+                "organismo_nombre": "Administración local de ejemplo",
+                "datos_json": {"origen": origen},
+            },
+            hoy=date(2026, 9, 20),
+        )
+        assert estado["codigo"] == "PENDIENTE_BOE"
