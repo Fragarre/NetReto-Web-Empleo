@@ -75,32 +75,6 @@ def test_fuente_real_solo_lectura():
 
     assert filas
 
-    # Cruce histórico BOP Alicante, estrictamente SOLO_REVISION y sin BD.
-    from datetime import date
-    from app.bop_alicante import consultar_bop_alicante
-    administrativas_base = [x for x in filas if x["ambito_administrativo"] == "SI"]
-    fechas_base = []
-    for x in administrativas_base:
-        for enlace in x.get("enlaces") or []:
-            # La fecha visible de Bases está en la cuarta celda del listado; se obtiene de nuevo
-            # de la fila normalizada mediante el documento asociado cuando haya plazo visible.
-            pass
-    historico = consultar_bop_alicante(dias_solape=365, hasta=date.today(), max_items=5000)
-    print(
-        "ALICANTE_BOP_HISTORICO",
-        "desde=", historico.get("desde"),
-        "hasta=", historico.get("hasta"),
-        "descubiertos=", historico.get("descubiertos"),
-        "administrativos=", historico.get("administrativos"),
-        "revision=", historico.get("revision"),
-        "seguimientos=", historico.get("seguimientos"),
-        "errores=", historico.get("errores"),
-    )
-    for h in historico.get("detalle", []):
-        texto = " ".join(str(h.get(k) or "") for k in ("extracto", "organismo", "denominacion")).lower()
-        if any((x.get("entidad") or "").lower().replace("ayuntamiento de ", "") in texto for x in administrativas_base):
-            print("ALICANTE_BOP_COINCIDENCIA", repr(h))
-
     assert any(x["ambito_administrativo"] == "SI" for x in filas)
     assert all("estado_revision" in x for x in filas)
 
