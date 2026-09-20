@@ -122,6 +122,53 @@ def _calcular_cierre_habiles(fecha_boe: date, dias: int, organismo: str | None) 
     return actual
 
 
+def _fecha_iso(valor: Any) -> date | None:
+    if isinstance(valor, date):
+        return valor
+    if isinstance(valor, str):
+        try:
+            return date.fromisoformat(valor[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _estado_plazo_boe(
+    *,
+    fecha_boe: date,
+    literal: str,
+    hoy: date,
+    organismo: str | None,
+) -> dict[str, Any]:
+    dias = _dias_habiles_literal(literal)
+    cierre = _calcular_cierre_habiles(fecha_boe, dias, organismo) if dias else None
+    if not cierre:
+        return {
+            "codigo": "PLAZO_LITERAL",
+            "fecha_referencia": fecha_boe + timedelta(days=1),
+            "dias_habiles": dias,
+            "literal": literal,
+        }
+
+    apertura = fecha_boe + timedelta(days=1)
+    if hoy < apertura:
+        codigo = "PENDIENTE_APERTURA"
+    elif hoy <= cierre:
+        codigo = "ABIERTO"
+    else:
+        codigo = "CERRADO"
+    return {
+        "codigo": codigo,
+        "fecha_apertura": apertura,
+        "fecha_cierre": cierre,
+        "fecha_cierre_calculada": True,
+        "fecha_cierre_sin_festivos_locales": True,
+        "aviso_festivos_locales": "Confirmar fechas en función de días festivos exclusivos de este municipio",
+        "dias_habiles": dias,
+        "literal": literal,
+    }
+
+
 def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> dict[str, Any]:
     """Deriva la situación de inscripción sin mezclarla con el ciclo selectivo."""
     hoy = hoy or date.today()
@@ -136,6 +183,40 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
         return {"codigo": "CERRADO", "fecha_apertura": apertura, "fecha_cierre": cierre}
 
     datos = proceso.get("datos_json") or {}
+    agregados = datos.get("boe_local_agregados")
+    if isinstance(agregados, list) and agregados:
+        plazos = []
+        for boe in agregados:
+            if not isinstance(boe, dict):
+                continue
+            literal_agregado = str(boe.get("plazo_solicitudes_literal") or "").strip()
+            fecha_agregada = _fecha_iso(boe.get("fecha_boe"))
+            if not literal_agregado or not fecha_agregada:
+                continue
+            plazo = _estado_plazo_boe(
+                fecha_boe=fecha_agregada,
+                literal=literal_agregado,
+                hoy=hoy,
+                organismo=proceso.get("organismo_nombre"),
+            )
+            plazo.update({
+                "codigo_externo": boe.get("codigo_externo"),
+                "boe_id": boe.get("boe_id"),
+                "fecha_boe": fecha_agregada,
+                "denominacion": boe.get("denominacion"),
+                "plazas": boe.get("plazas"),
+            })
+            plazos.append(plazo)
+
+        if plazos:
+            codigos = {p["codigo"] for p in plazos}
+            codigo = next(iter(codigos)) if len(codigos) == 1 else "PLAZOS_MULTIPLES"
+            return {
+                "codigo": codigo,
+                "plazos_multiples": True,
+                "plazos": plazos,
+            }
+
     boe_local = datos.get("boe_local") if isinstance(datos.get("boe_local"), dict) else {}
     literal = str(
         datos.get("plazo_solicitudes_literal")
@@ -144,34 +225,12 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
     ).strip()
     fecha_boe = proceso.get("fecha_boe_publicacion") or proceso.get("fecha_convocatoria")
     if literal and fecha_boe:
-        dias = _dias_habiles_literal(literal)
-        cierre_calculado = _calcular_cierre_habiles(
-            fecha_boe, dias, proceso.get("organismo_nombre")
-        ) if dias else None
-        if cierre_calculado:
-            apertura_calculada = fecha_boe + timedelta(days=1)
-            if hoy < apertura_calculada:
-                codigo = "PENDIENTE_APERTURA"
-            elif hoy <= cierre_calculado:
-                codigo = "ABIERTO"
-            else:
-                codigo = "CERRADO"
-            return {
-                "codigo": codigo,
-                "fecha_apertura": apertura_calculada,
-                "fecha_cierre": cierre_calculado,
-                "fecha_cierre_calculada": True,
-                "fecha_cierre_sin_festivos_locales": True,
-                "aviso_festivos_locales": "Confirmar fechas en función de días festivos exclusivos de este municipio",
-                "dias_habiles": dias,
-                "literal": literal,
-            }
-        return {
-            "codigo": "PLAZO_LITERAL",
-            "fecha_referencia": fecha_boe + timedelta(days=1),
-            "dias_habiles": dias,
-            "literal": literal,
-        }
+        return _estado_plazo_boe(
+            fecha_boe=fecha_boe,
+            literal=literal,
+            hoy=hoy,
+            organismo=proceso.get("organismo_nombre"),
+        )
 
     origen = str(datos.get("origen") or "").upper()
     if origen == "BOP_VALENCIA_MUNICIPAL" and not boe_local:
