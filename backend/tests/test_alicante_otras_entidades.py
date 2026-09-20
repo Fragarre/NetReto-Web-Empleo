@@ -42,3 +42,21 @@ def test_no_administrativo_no_se_convierte_en_oportunidad_administrativa():
         "Ayuntamiento de Calp",
     ))[0]
     assert fila["ambito_administrativo"] != "SI"
+
+
+def test_fuente_real_solo_lectura():
+    import httpx
+    from app.alicante_otras_entidades import LISTADO_URL
+
+    respuesta = httpx.get(
+        LISTADO_URL,
+        timeout=30,
+        follow_redirects=True,
+        headers={"User-Agent": "TuCoach-Empleo/1.0"},
+    )
+    respuesta.raise_for_status()
+    filas = _parse_listado(respuesta.text)
+
+    assert filas
+    assert any(x["ambito_administrativo"] == "SI" for x in filas)
+    assert all("estado_revision" in x for x in filas)
