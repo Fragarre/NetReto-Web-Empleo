@@ -397,25 +397,44 @@ def recuperar_boe_para_proceso_bop(
                 candidatos_documento.setdefault(boe_id, convocatoria)
 
         candidatos = list(candidatos_documento.values())
+        candidatos_detalle = [
+            {
+                "codigo_externo": candidato.get("codigo_externo"),
+                "boe_id": candidato.get("boe_id"),
+                "fecha_boe": candidato.get("fecha_boe"),
+                "entidad": candidato.get("entidad"),
+                "denominacion": candidato.get("denominacion"),
+                "plazas": candidato.get("plazas"),
+                "bases_bop": candidato.get("bases_bop"),
+                "plazo_solicitudes_literal": candidato.get("plazo_solicitudes_literal"),
+                "url_html": candidato.get("url_html"),
+                "url_xml": candidato.get("url_xml"),
+                "url_pdf": candidato.get("url_pdf"),
+            }
+            for candidato in candidatos
+        ]
         if len(candidatos) != 1:
+            plazas_candidatas = sum(
+                candidato.get("plazas") or 0
+                for candidato in candidatos
+                if isinstance(candidato.get("plazas"), int)
+            )
+            cobertura_completa = (
+                bool(candidatos)
+                and isinstance(proceso.get("plazas"), int)
+                and proceso["plazas"] > 0
+                and plazas_candidatas == proceso["plazas"]
+            )
             connection.rollback()
             return {
                 "modo": "APLICADO" if aplicar else "SOLO_REVISION",
                 "estado": "SIN_COINCIDENCIA" if not candidatos else "REVISION_SOLAPAMIENTO",
                 "candidatos": len(candidatos),
-                "candidatos_detalle": [
-                    {
-                        "codigo_externo": candidato.get("codigo_externo"),
-                        "boe_id": candidato.get("boe_id"),
-                        "fecha_boe": candidato.get("fecha_boe"),
-                        "entidad": candidato.get("entidad"),
-                        "denominacion": candidato.get("denominacion"),
-                        "plazas": candidato.get("plazas"),
-                        "bases_bop": candidato.get("bases_bop"),
-                        "plazo_solicitudes_literal": candidato.get("plazo_solicitudes_literal"),
-                    }
-                    for candidato in candidatos
-                ],
+                "candidatos_detalle": candidatos_detalle,
+                "boe_local_agregados_propuestos": candidatos_detalle if candidatos else [],
+                "plazas_proceso": proceso.get("plazas"),
+                "plazas_candidatas": plazas_candidatas,
+                "cobertura_completa": cobertura_completa,
                 "dias_revisados": dias,
                 "errores": extraccion["errores"],
             }
