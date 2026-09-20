@@ -99,4 +99,5 @@ def test_fuente_real_solo_lectura():
             "| inicio=", x.get("fecha_inicio_presentacion"),
             "| fin=", x.get("fecha_fin_presentacion"),
             "| obs=", x.get("observaciones"),
+            "| enlaces=", x.get("enlaces"),
         )
