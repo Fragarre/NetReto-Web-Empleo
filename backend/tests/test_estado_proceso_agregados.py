@@ -1,0 +1,81 @@
+from datetime import date
+
+from app.estado_proceso import estado_inscripcion
+
+
+def test_boe_local_unico_mantiene_contrato_actual():
+    proceso = {
+        "organismo_nombre": "Ayuntamiento de Ejemplo",
+        "fecha_boe_publicacion": date(2026, 8, 13),
+        "datos_json": {
+            "boe_local": {
+                "plazo_solicitudes_literal": "20 días hábiles a partir del día siguiente"
+            }
+        },
+    }
+
+    estado = estado_inscripcion(proceso, hoy=date(2026, 8, 20))
+
+    assert estado["codigo"] == "ABIERTO"
+    assert estado["fecha_cierre_calculada"] is True
+    assert estado["fecha_cierre_sin_festivos_locales"] is True
+    assert "plazos_multiples" not in estado
+
+
+def test_boe_agregados_calculan_cada_plazo_por_separado():
+    proceso = {
+        "organismo_nombre": "Diputación Provincial de Castellón",
+        "datos_json": {
+            "boe_local_agregados": [
+                {
+                    "codigo_externo": "BOE-A-2026-18928",
+                    "fecha_boe": "2026-09-10",
+                    "denominacion": "Auxiliar de Recaudación",
+                    "plazas": 5,
+                    "plazo_solicitudes_literal": "10 días hábiles",
+                },
+                {
+                    "codigo_externo": "BOE-A-2026-19226",
+                    "fecha_boe": "2026-09-15",
+                    "denominacion": "Técnico/a Medio/a de Gestión",
+                    "plazas": 1,
+                    "plazo_solicitudes_literal": "10 días hábiles",
+                },
+            ]
+        },
+    }
+
+    estado = estado_inscripcion(proceso, hoy=date(2026, 9, 20))
+
+    assert estado["codigo"] == "ABIERTO"
+    assert estado["plazos_multiples"] is True
+    assert [p["fecha_cierre"] for p in estado["plazos"]] == [
+        date(2026, 9, 24),
+        date(2026, 9, 29),
+    ]
+    assert all(p["codigo"] == "ABIERTO" for p in estado["plazos"])
+
+
+def test_boe_agregados_no_inventan_estado_unico_si_los_plazos_difieren():
+    proceso = {
+        "organismo_nombre": "Diputación Provincial de Castellón",
+        "datos_json": {
+            "boe_local_agregados": [
+                {
+                    "codigo_externo": "BOE-1",
+                    "fecha_boe": "2026-09-01",
+                    "plazo_solicitudes_literal": "10 días hábiles",
+                },
+                {
+                    "codigo_externo": "BOE-2",
+                    "fecha_boe": "2026-09-15",
+                    "plazo_solicitudes_literal": "10 días hábiles",
+                },
+            ]
+        },
+    }
+
+    estado = estado_inscripcion(proceso, hoy=date(2026, 9, 20))
+
+    assert estado["codigo"] == "PLAZOS_MULTIPLES"
+    assert {p["codigo"] for p in estado["plazos"]} == {"ABIERTO", "CERRADO"}
