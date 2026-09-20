@@ -1,7 +1,7 @@
 from datetime import date
 
 from app.estado_proceso import estado_inscripcion
-from app.boe_local_import import _fusionar_boe_agregados
+from app.boe_local_import import _agrupar_convocatorias_por_boe, _fusionar_boe_agregados
 
 
 def test_boe_local_unico_mantiene_contrato_actual():
@@ -125,3 +125,17 @@ def test_fusion_agregados_incorpora_boe_posterior_sin_duplicar_previos():
         "BOE-A-2026-20000",
     ]
     assert len(actualizados) == 2
+
+
+def test_un_documento_boe_con_varios_turnos_conserva_total_plazas():
+    convocatorias = [
+        {"boe_id": "BOE-A-2026-17643", "codigo_externo": "BOE-A-2026-17643#1", "denominacion": "Auxiliar Administrativo/a", "plazas": 1},
+        {"boe_id": "BOE-A-2026-17643", "codigo_externo": "BOE-A-2026-17643#2", "denominacion": "Auxiliar Administrativo/a", "plazas": 7},
+        {"boe_id": "BOE-A-2026-17643", "codigo_externo": "BOE-A-2026-17643#3", "denominacion": "Auxiliar Administrativo/a", "plazas": 3},
+    ]
+
+    documentos = _agrupar_convocatorias_por_boe(convocatorias)
+
+    assert len(documentos) == 1
+    assert documentos[0]["boe_id"] == "BOE-A-2026-17643"
+    assert documentos[0]["plazas"] == 11
