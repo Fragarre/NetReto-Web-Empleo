@@ -123,6 +123,10 @@ def _datos_boe(convocatoria: dict[str, Any], codigo: str) -> dict[str, Any]:
         "origen": "BOE_LOCAL",
         "boe_id": convocatoria.get("boe_id"),
         "codigo_externo": codigo,
+        "fecha_boe": convocatoria.get("fecha_boe"),
+        "entidad": convocatoria.get("entidad"),
+        "denominacion": convocatoria.get("denominacion"),
+        "plazas": convocatoria.get("plazas"),
         "bases_bop": convocatoria.get("bases_bop"),
         "plazo_solicitudes_literal": convocatoria.get("plazo_solicitudes_literal"),
         "url_html": convocatoria.get("url_html"),
@@ -130,6 +134,25 @@ def _datos_boe(convocatoria: dict[str, Any], codigo: str) -> dict[str, Any]:
         "url_pdf": convocatoria.get("url_pdf"),
         "texto_plaza": convocatoria.get("texto_plaza"),
     }
+
+
+def _fusionar_boe_agregados(
+    existentes: list[dict[str, Any]] | None,
+    nuevos: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Une publicaciones BOE por identidad documental sin duplicarlas."""
+    por_id: dict[str, dict[str, Any]] = {}
+    orden: list[str] = []
+    for item in [*(existentes or []), *nuevos]:
+        if not isinstance(item, dict):
+            continue
+        clave = str(item.get("boe_id") or item.get("codigo_externo") or "").strip()
+        if not clave:
+            continue
+        if clave not in por_id:
+            orden.append(clave)
+        por_id[clave] = {**por_id.get(clave, {}), **item}
+    return [por_id[clave] for clave in orden]
 
 
 def _insertar_publicacion_boe(cursor, *, fuente_id: int, proceso_id: int, convocatoria: dict[str, Any], codigo: str) -> bool:
@@ -217,6 +240,23 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
                     "turno": convocatoria.get("turno"),
                     "fecha_boe": convocatoria.get("fecha_boe"),
                     "estado_importacion": "EXCLUIDA_TURNO_INTERNO",
+                })
+                continue
+
+            # Una referencia BOE ya absorbida como publicación de un proceso BOP
+            # no debe reaparecer como proceso BOE independiente.
+            cursor.execute(
+                "SELECT proceso_id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
+                (fuente_boe_id, codigo),
+            )
+            publicacion_existente = cursor.fetchone()
+            if publicacion_existente:
+                resultado["existentes_boe"] += 1
+                resultado["detalle"].append({
+                    "codigo_externo": codigo,
+                    "identificador_estable": estable,
+                    "estado_importacion": "EXISTENTE_PUBLICACION",
+                    "proceso_id": publicacion_existente["proceso_id"],
                 })
                 continue
 
@@ -373,7 +413,7 @@ def recuperar_boe_para_proceso_bop(
     with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
-            SELECT p.id,p.organismo_id,p.denominacion,p.plazas,p.fecha_convocatoria,
+            SELECT p.id,p.organismo_id,p.denominacion,p.plazas,p.fecha_convocatoria,p.datos_json,
                    o.nombre AS organismo_nombre,o.provincia
             FROM procesos p JOIN organismos o ON o.id=p.organismo_id
             WHERE p.id=%s
@@ -413,28 +453,99 @@ def recuperar_boe_para_proceso_bop(
             }
             for candidato in candidatos
         ]
-        if len(candidatos) != 1:
-            plazas_candidatas = sum(
-                candidato.get("plazas") or 0
-                for candidato in candidatos
-                if isinstance(candidato.get("plazas"), int)
-            )
-            cobertura_completa = (
-                bool(candidatos)
+        plazas_candidatas = sum(
+            candidato.get("plazas") or 0
+            for candidato in candidatos
+            if isinstance(candidato.get("plazas"), int)
+        )
+        cobertura_completa = (
+            bool(candidatos)
+            and isinstance(proceso.get("plazas"), int)
+            and proceso["plazas"] > 0
+            and plazas_candidatas == proceso["plazas"]
+        )
+        es_agregado = (
+            len(candidatos) > 1
+            or (
+                len(candidatos) == 1
                 and isinstance(proceso.get("plazas"), int)
-                and proceso["plazas"] > 0
-                and plazas_candidatas == proceso["plazas"]
+                and isinstance(candidatos[0].get("plazas"), int)
+                and candidatos[0]["plazas"] != proceso["plazas"]
             )
+        )
+
+        if not candidatos:
             connection.rollback()
             return {
                 "modo": "APLICADO" if aplicar else "SOLO_REVISION",
-                "estado": "SIN_COINCIDENCIA" if not candidatos else "REVISION_SOLAPAMIENTO",
+                "estado": "SIN_COINCIDENCIA",
+                "candidatos": 0,
+                "candidatos_detalle": [],
+                "boe_local_agregados_propuestos": [],
+                "plazas_proceso": proceso.get("plazas"),
+                "plazas_candidatas": 0,
+                "cobertura_completa": False,
+                "dias_revisados": dias,
+                "errores": extraccion["errores"],
+            }
+
+        if es_agregado:
+            existentes = (proceso.get("datos_json") or {}).get("boe_local_agregados") or []
+            fusionados = _fusionar_boe_agregados(existentes, candidatos_detalle)
+            if not aplicar:
+                connection.rollback()
+                return {
+                    "modo": "SOLO_REVISION",
+                    "estado": "AGREGADO_PARCIAL" if not cobertura_completa else "AGREGADO_COMPLETO",
+                    "candidatos": len(candidatos),
+                    "candidatos_detalle": candidatos_detalle,
+                    "boe_local_agregados_propuestos": fusionados,
+                    "plazas_proceso": proceso.get("plazas"),
+                    "plazas_candidatas": plazas_candidatas,
+                    "cobertura_completa": cobertura_completa,
+                    "dias_revisados": dias,
+                    "errores": extraccion["errores"],
+                }
+
+            fuente_boe = resolver_fuente(cursor, nombre="Boletín Oficial del Estado", tipo="BOE")
+            cursor.execute(
+                """
+                UPDATE procesos
+                SET datos_json = COALESCE(datos_json,'{}'::jsonb) || %s,
+                    ultima_publicacion_at = GREATEST(
+                        COALESCE(ultima_publicacion_at, %s::date::timestamptz),
+                        %s::date::timestamptz
+                    ),
+                    updated_at=NOW()
+                WHERE id=%s
+                """,
+                (
+                    Jsonb({"boe_local_agregados": fusionados}),
+                    max(c.get("fecha_boe") for c in candidatos if c.get("fecha_boe")),
+                    max(c.get("fecha_boe") for c in candidatos if c.get("fecha_boe")),
+                    proceso_id,
+                ),
+            )
+            creadas = 0
+            for candidato in candidatos:
+                if _insertar_publicacion_boe(
+                    cursor,
+                    fuente_id=fuente_boe["id"],
+                    proceso_id=proceso_id,
+                    convocatoria=candidato,
+                    codigo=candidato["codigo_externo"],
+                ):
+                    creadas += 1
+            connection.commit()
+            return {
+                "modo": "APLICADO",
+                "estado": "AGREGADO_ACTUALIZADO" if creadas else "AGREGADO_SIN_CAMBIOS",
                 "candidatos": len(candidatos),
-                "candidatos_detalle": candidatos_detalle,
-                "boe_local_agregados_propuestos": candidatos_detalle if candidatos else [],
+                "boe_local_agregados": fusionados,
                 "plazas_proceso": proceso.get("plazas"),
                 "plazas_candidatas": plazas_candidatas,
                 "cobertura_completa": cobertura_completa,
+                "publicaciones_creadas": creadas,
                 "dias_revisados": dias,
                 "errores": extraccion["errores"],
             }
