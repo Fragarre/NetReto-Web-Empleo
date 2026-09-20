@@ -77,7 +77,7 @@ def test_fuente_real_solo_lectura():
             "ALICANTE_CASO",
             x.get("estado_revision"),
             x.get("estado_terminal"),
-            x.get("plaza"),
+            x.get("denominacion"),
             "|",
             x.get("entidad"),
         )
