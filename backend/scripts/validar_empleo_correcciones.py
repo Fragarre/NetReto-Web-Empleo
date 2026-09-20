@@ -46,6 +46,10 @@ def main() -> int:
 
     if "recuperar_boe_para_proceso_bop(" not in castellon:
         raise AssertionError("El alta BOP Castellón no activa la recuperación BOE")
+    pos_commit = castellon.find("connection.commit()")
+    pos_recuperar = castellon.find("recuperacion = recuperar_boe_para_proceso_bop(", pos_commit)
+    if pos_commit < 0 or pos_recuperar < pos_commit:
+        raise AssertionError("La recuperación BOE debe ejecutarse después del commit BOP")
 
     # Casos funcionales puros sin importar el paquete app (CI mínimo no instala pypdf).
     import ast
