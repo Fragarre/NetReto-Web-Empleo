@@ -24,6 +24,22 @@ def _entidad_visible(entidad: str | None) -> str | None:
     return re.sub(r"\s*\([^)]*\)\s*$", "", entidad).strip() or None
 
 
+def _nombres_entidad(entidad: str | None) -> set[str]:
+    """Variantes oficiales explícitas; no realiza matching aproximado."""
+    visible = _entidad_visible(entidad)
+    if not visible:
+        return set()
+    prefijo = ""
+    nombre = visible
+    m = re.match(r"^(ayuntamiento de\s+)(.+)$", visible, flags=re.I)
+    if m:
+        prefijo, nombre = m.group(1), m.group(2)
+    variantes = {nombre}
+    if "/" in nombre:
+        variantes.update(x.strip() for x in nombre.split("/") if x.strip())
+    return {_sin(f"{prefijo}{x}") for x in variantes}
+
+
 def _familia(denominacion: str | None) -> str | None:
     n = _sin(denominacion)
     if "auxiliar administr" in n:
@@ -47,11 +63,11 @@ def _buscar_organismo(
     visible = _entidad_visible(entidad)
     if not visible or not provincia:
         return None
-    objetivo = _sin(visible)
+    objetivos = _nombres_entidad(visible)
     provincia_objetivo = _sin(provincia)
     exactos = [
         o for o in organismos
-        if _sin(o.get("nombre")) == objetivo
+        if _sin(o.get("nombre")) in objetivos
         and _sin(o.get("provincia")) == provincia_objetivo
     ]
     return exactos[0] if len(exactos) == 1 else None
