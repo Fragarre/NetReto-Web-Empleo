@@ -410,6 +410,7 @@ def preparar_importacion_bop_castellon(
         "errores": list(revision["errores"]),
         "detalle": [],
     }
+    recuperaciones_boe: list[tuple[int, date]] = []
     if resultado["errores"]:
         return resultado
 
@@ -708,15 +709,10 @@ def importar_bop_castellon(
                     )
                     proceso_id = cursor.fetchone()["id"]
                     resultado["nuevas"] += 1
-                    # El BOE puede ser anterior a la incorporación de esta fuente.
-                    # Se recupera de forma selectiva sin ampliar la ventana del cron.
-                    if aplicar and fecha_publicacion:
-                        recuperar_boe_para_proceso_bop(
-                            proceso_id=proceso_id,
-                            fecha_bases=fecha_publicacion,
-                            hasta=hasta,
-                            aplicar=True,
-                        )
+                    # La recuperación BOE se ejecuta después del commit BOP,
+                    # para que la segunda conexión vea el proceso ya confirmado.
+                    if fecha_publicacion:
+                        recuperaciones_boe.append((proceso_id, fecha_publicacion))
 
             cursor.execute(
                 "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
@@ -751,4 +747,17 @@ def importar_bop_castellon(
             })
 
         connection.commit()
+
+    resultado["recuperaciones_boe"] = []
+    for proceso_id, fecha_bases in recuperaciones_boe:
+        recuperacion = recuperar_boe_para_proceso_bop(
+            proceso_id=proceso_id,
+            fecha_bases=fecha_bases,
+            hasta=hasta,
+            aplicar=True,
+        )
+        resultado["recuperaciones_boe"].append({
+            "proceso_id": proceso_id,
+            **recuperacion,
+        })
     return resultado
