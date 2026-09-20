@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -50,6 +50,18 @@ def _parse_rss(xml: str | bytes) -> list[dict[str, Any]]:
     return items
 
 
+def _fecha_es(value: str | None) -> date | None:
+    value = _norm(value)
+    if not value:
+        return None
+    for formato in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(value, formato).date()
+        except ValueError:
+            pass
+    return None
+
+
 def _parse_listado(html: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
     filas: list[dict[str, Any]] = []
@@ -65,14 +77,24 @@ def _parse_listado(html: str) -> list[dict[str, Any]]:
         entidad = textos[1] if len(textos) > 1 else None
         if not plaza or not entidad:
             continue
-        enlace = next((a.get("href") for a in tr.find_all("a", href=True)), None)
+        vacantes = textos[2] if len(textos) > 2 else None
+        fecha_inicio = _fecha_es(textos[4] if len(textos) > 4 else None)
+        fecha_fin = _fecha_es(textos[5] if len(textos) > 5 else None)
+        observaciones = textos[6] if len(textos) > 6 else None
+        enlaces = [urljoin(BASE_URL, a.get("href")) for a in tr.find_all("a", href=True)]
+        enlace = enlaces[0] if enlaces else None
         clave = f"{entidad}|{plaza}|{enlace or ''}"
         filas.append(
             {
                 "referencia": f"DALIOTRAS:{hashlib.sha256(clave.encode('utf-8')).hexdigest()[:20]}",
                 "denominacion": plaza,
                 "entidad": entidad,
-                "url": urljoin(BASE_URL, enlace) if enlace else LISTADO_URL,
+                "vacantes": vacantes,
+                "fecha_inicio_presentacion": fecha_inicio,
+                "fecha_fin_presentacion": fecha_fin,
+                "observaciones": observaciones,
+                "url": enlace or LISTADO_URL,
+                "enlaces": enlaces,
                 "ambito_administrativo": clasificar_ambito_administrativo(
                     {"denominacion": plaza, "cuerpo_escala": None, "grupo": None}
                 ),
