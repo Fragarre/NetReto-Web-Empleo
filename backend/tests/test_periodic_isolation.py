@@ -156,3 +156,20 @@ def test_periodico_revision_pasa_boe_absorbidos_al_importador(monkeypatch):
         "BOE-AGREGADO-1",
         "BOE-AGREGADO-2",
     }
+
+
+def test_selector_boe_pendientes_acota_oportunidades_y_administraciones_cv():
+    import inspect
+    import app.periodic as periodic
+
+    codigo = inspect.getsource(periodic._recuperar_boe_pendientes_activos)
+
+    assert "p.es_oportunidad=TRUE" in codigo
+    assert "p.ambito_administrativo='SI'" in codigo
+    assert "p.estado='EN_CURSO'" in codigo
+    assert "JOIN organismos o ON o.id=p.organismo_id" in codigo
+    assert "o.activo=TRUE" in codigo
+    assert "o.tipo='AYUNTAMIENTO'" in codigo
+    assert "o.tipo='DIPUTACION'" in codigo
+    assert "'valencia','valència','alicante','castellón','castellon'" in codigo
+    assert "p.datos_json->>'origen' IN ('BOP_VALENCIA','BOP_CASTELLON','BOP_ALICANTE')" in codigo
