@@ -10,6 +10,7 @@ from .boe_local_import import previsualizar_importacion_boe_local
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_municipios import importar_municipales_bop
 from .bop_castellon import importar_bop_castellon
+from .bop_alicante import importar_bop_alicante
 from .gva_estatal_service import importar_gva_estatal
 
 
@@ -53,6 +54,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
     - BOP Valencia Diputación.
     - BOP Valencia municipal: altas y seguimientos de ayuntamientos.
     - BOP Castellón: altas y seguimientos administrativos validados.
+    - BOP Alicante: altas y seguimientos administrativos validados.
     - BOE local: altas/vinculaciones de convocatorias administrativas valencianas.
     - GVA estatal + seguimiento DOGV directo de convocatorias activas.
 
@@ -111,6 +113,15 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         "bop_castellon",
         lambda: importar_bop_castellon(
             desde=desde,
+            hasta=fecha_hoy,
+            aplicar=aplicar,
+        ),
+    )
+
+    registrar(
+        "bop_alicante",
+        lambda: importar_bop_alicante(
+            dias_solape=dias_solape,
             hasta=fecha_hoy,
             aplicar=aplicar,
         ),
