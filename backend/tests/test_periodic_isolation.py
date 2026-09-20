@@ -110,3 +110,49 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
     assert salida["fuentes"]["gva"] == {"marca": "gva"}
     assert salida["estado_fuentes"]["bop_valencia_diputacion"]["estado"] == "ERROR"
     assert salida["resumen_fuentes"]["errores"] == 1
+
+
+def test_periodico_revision_pasa_boe_absorbidos_al_importador(monkeypatch):
+    import app.periodic as periodic
+
+    monkeypatch.setattr(periodic, "diagnosticar_bop", lambda *args, **kwargs: {})
+    monkeypatch.setattr(periodic, "importar_municipales_bop", lambda **kwargs: {})
+    monkeypatch.setattr(periodic, "importar_bop_castellon", lambda **kwargs: {})
+    monkeypatch.setattr(periodic, "bootstrap_otras_entidades_alicante", lambda **kwargs: {})
+    monkeypatch.setattr(periodic, "importar_bop_alicante", lambda **kwargs: {})
+    monkeypatch.setattr(
+        periodic,
+        "_recuperar_boe_pendientes_activos",
+        lambda **kwargs: {
+            "detalle": [
+                {"proceso_id": 406, "boe_id": "BOE-UNICO"},
+                {
+                    "proceso_id": 408,
+                    "boe_local_agregados_propuestos": [
+                        {"boe_id": "BOE-AGREGADO-1"},
+                        {"boe_id": "BOE-AGREGADO-2"},
+                    ],
+                },
+            ]
+        },
+    )
+    recibidos = {}
+
+    def boe(**kwargs):
+        recibidos.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(periodic, "previsualizar_importacion_boe_local", boe)
+    monkeypatch.setattr(periodic, "importar_gva_estatal", lambda **kwargs: {})
+
+    periodic.ejecutar_periodico(
+        aplicar=False,
+        hoy=periodic.date(2026, 9, 20),
+        dias_solape=7,
+    )
+
+    assert recibidos["boe_ids_absorbidos"] == {
+        "BOE-UNICO",
+        "BOE-AGREGADO-1",
+        "BOE-AGREGADO-2",
+    }
