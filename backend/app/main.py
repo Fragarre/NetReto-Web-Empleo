@@ -16,6 +16,7 @@ from .gva_estatal_service import diagnosticar_filtros_plazo_gva, importar_gva_es
 from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
 from .ayuntamiento_alicante import diagnosticar_ayuntamiento_alicante, importar_ayuntamiento_alicante
 from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
+from .boe_local_import import recuperar_boe_para_proceso_bop
 from .empleo_admin import (
     listar_pendientes_revision,
     actualizar_revision,
@@ -344,6 +345,26 @@ def importar_alicante_bootstrap_endpoint(
         return bootstrap_otras_entidades_alicante(max_items=max_items, aplicar=aplicar)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Error en bootstrap Alicante: {exc}") from exc
+
+@app.post("/admin/import/castellon-boe-backfill")
+def castellon_boe_backfill_endpoint(
+    proceso_id: int = Query(..., ge=1),
+    fecha_bases: date = Query(...),
+    hasta: date | None = Query(default=None),
+    aplicar: bool = Query(default=False),
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Recuperación BOE selectiva; por defecto sólo revisión."""
+    _validar_import_secret(x_import_secret)
+    try:
+        return recuperar_boe_para_proceso_bop(
+            proceso_id=proceso_id,
+            fecha_bases=fecha_bases,
+            hasta=hasta,
+            aplicar=aplicar,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en recuperación BOE Castellón: {exc}") from exc
 
 @app.get("/admin/revision/pendientes")
 def revision_pendientes(x_import_secret: str | None = Header(default=None), limite: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:

@@ -13,6 +13,7 @@ from .bop_valencia_municipios import _clasificar_anuncio, _sin
 from .bop_alicante import seleccionar_proceso_seguimiento
 from .database import get_connection
 from .organismos import resolver_fuente, resolver_organismo
+from .boe_local_import import recuperar_boe_para_proceso_bop
 
 
 
@@ -409,6 +410,7 @@ def preparar_importacion_bop_castellon(
         "errores": list(revision["errores"]),
         "detalle": [],
     }
+    recuperaciones_boe: list[tuple[int, date]] = []
     if resultado["errores"]:
         return resultado
 
@@ -707,6 +709,10 @@ def importar_bop_castellon(
                     )
                     proceso_id = cursor.fetchone()["id"]
                     resultado["nuevas"] += 1
+                    # La recuperación BOE se ejecuta después del commit BOP,
+                    # para que la segunda conexión vea el proceso ya confirmado.
+                    if fecha_publicacion:
+                        recuperaciones_boe.append((proceso_id, fecha_publicacion))
 
             cursor.execute(
                 "SELECT id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
@@ -741,4 +747,17 @@ def importar_bop_castellon(
             })
 
         connection.commit()
+
+    resultado["recuperaciones_boe"] = []
+    for proceso_id, fecha_bases in recuperaciones_boe:
+        recuperacion = recuperar_boe_para_proceso_bop(
+            proceso_id=proceso_id,
+            fecha_bases=fecha_bases,
+            hasta=hasta,
+            aplicar=True,
+        )
+        resultado["recuperaciones_boe"].append({
+            "proceso_id": proceso_id,
+            **recuperacion,
+        })
     return resultado
