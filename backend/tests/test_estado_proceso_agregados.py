@@ -1,6 +1,7 @@
 from datetime import date
 
 from app.estado_proceso import estado_inscripcion
+from app.boe_local_import import _fusionar_boe_agregados
 
 
 def test_boe_local_unico_mantiene_contrato_actual():
@@ -79,3 +80,48 @@ def test_boe_agregados_no_inventan_estado_unico_si_los_plazos_difieren():
 
     assert estado["codigo"] == "PLAZOS_MULTIPLES"
     assert {p["codigo"] for p in estado["plazos"]} == {"ABIERTO", "CERRADO"}
+
+
+def test_fusion_agregados_es_idempotente_por_documento_boe():
+    primero = {
+        "boe_id": "BOE-A-2026-18928",
+        "codigo_externo": "BOE-A-2026-18928#1",
+        "fecha_boe": "2026-09-10",
+        "plazas": 5,
+    }
+    segundo = {
+        "boe_id": "BOE-A-2026-19226",
+        "codigo_externo": "BOE-A-2026-19226#1",
+        "fecha_boe": "2026-09-15",
+        "plazas": 1,
+    }
+
+    una_ejecucion = _fusionar_boe_agregados([], [primero, segundo])
+    dos_ejecuciones = _fusionar_boe_agregados(una_ejecucion, [primero, segundo])
+
+    assert dos_ejecuciones == una_ejecucion
+    assert len(dos_ejecuciones) == 2
+
+
+def test_fusion_agregados_incorpora_boe_posterior_sin_duplicar_previos():
+    primero = {
+        "boe_id": "BOE-A-2026-18928",
+        "codigo_externo": "BOE-A-2026-18928#1",
+        "fecha_boe": "2026-09-10",
+        "plazas": 5,
+    }
+    posterior = {
+        "boe_id": "BOE-A-2026-20000",
+        "codigo_externo": "BOE-A-2026-20000#1",
+        "fecha_boe": "2026-09-25",
+        "plazas": 3,
+    }
+
+    existentes = _fusionar_boe_agregados([], [primero])
+    actualizados = _fusionar_boe_agregados(existentes, [primero, posterior])
+
+    assert [x["boe_id"] for x in actualizados] == [
+        "BOE-A-2026-18928",
+        "BOE-A-2026-20000",
+    ]
+    assert len(actualizados) == 2
