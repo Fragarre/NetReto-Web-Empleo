@@ -187,8 +187,17 @@ def _insertar_publicacion_boe(cursor, *, fuente_id: int, proceso_id: int, convoc
     if not url:
         raise RuntimeError(f"URL BOE no disponible para {codigo}")
     cursor.execute(
-        "SELECT 1 FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
-        (fuente_id, codigo),
+        """
+        SELECT 1
+        FROM publicaciones
+        WHERE fuente_id=%s
+          AND (
+                referencia=%s
+                OR datos_json->>'boe_id'=%s
+              )
+        LIMIT 1
+        """,
+        (fuente_id, codigo, convocatoria.get("boe_id")),
     )
     if cursor.fetchone() is not None:
         return False
@@ -273,8 +282,17 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
             # Una referencia BOE ya absorbida como publicación de un proceso BOP
             # no debe reaparecer como proceso BOE independiente.
             cursor.execute(
-                "SELECT proceso_id FROM publicaciones WHERE fuente_id=%s AND referencia=%s LIMIT 1",
-                (fuente_boe_id, codigo),
+                """
+                SELECT proceso_id
+                FROM publicaciones
+                WHERE fuente_id=%s
+                  AND (
+                        referencia=%s
+                        OR datos_json->>'boe_id'=%s
+                      )
+                LIMIT 1
+                """,
+                (fuente_boe_id, codigo, convocatoria.get("boe_id")),
             )
             publicacion_existente = cursor.fetchone()
             if publicacion_existente:
