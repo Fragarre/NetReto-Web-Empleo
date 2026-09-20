@@ -11,6 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .ambito_administrativo import clasificar_ambito_administrativo
+from .estado_proceso import clasificar_evento_terminal
 
 BASE_URL = "https://sede.diputacionalicante.es/"
 LISTADO_URL = urljoin(BASE_URL, "empleo-otras-oposiciones/")
@@ -84,6 +85,9 @@ def _parse_listado(html: str) -> list[dict[str, Any]]:
         enlaces = [urljoin(BASE_URL, a.get("href")) for a in tr.find_all("a", href=True)]
         enlace = enlaces[0] if enlaces else None
         clave = f"{entidad}|{plaza}|{enlace or ''}"
+        estado_terminal = clasificar_evento_terminal(None, observaciones or "")
+        estado_revision = "TERMINAL" if estado_terminal else "CANDIDATO_ACTIVO"
+
         filas.append(
             {
                 "referencia": f"DALIOTRAS:{hashlib.sha256(clave.encode('utf-8')).hexdigest()[:20]}",
@@ -93,6 +97,8 @@ def _parse_listado(html: str) -> list[dict[str, Any]]:
                 "fecha_inicio_presentacion": fecha_inicio,
                 "fecha_fin_presentacion": fecha_fin,
                 "observaciones": observaciones,
+                "estado_revision": estado_revision,
+                "estado_terminal": estado_terminal,
                 "url": enlace or LISTADO_URL,
                 "enlaces": enlaces,
                 "ambito_administrativo": clasificar_ambito_administrativo(
@@ -113,6 +119,8 @@ def diagnosticar_otras_entidades_alicante(*, max_items: int = 200) -> dict[str, 
         "listado_url": LISTADO_URL,
         "descubiertos": 0,
         "administrativos": 0,
+        "candidatos_activos": 0,
+        "terminales": 0,
         "errores": [],
         "detalle": [],
     }
@@ -141,6 +149,9 @@ def diagnosticar_otras_entidades_alicante(*, max_items: int = 200) -> dict[str, 
     # y diagnóstico; no se enlazan elementos entre ambos por heurística débil.
     detalle = filas[:max_items]
     resultado["descubiertos"] = len(detalle)
-    resultado["administrativos"] = sum(1 for x in detalle if x["ambito_administrativo"] == "SI")
+    administrativos = [x for x in detalle if x["ambito_administrativo"] == "SI"]
+    resultado["administrativos"] = len(administrativos)
+    resultado["candidatos_activos"] = sum(1 for x in administrativos if x["estado_revision"] == "CANDIDATO_ACTIVO")
+    resultado["terminales"] = sum(1 for x in administrativos if x["estado_revision"] == "TERMINAL")
     resultado["detalle"] = detalle
     return resultado
