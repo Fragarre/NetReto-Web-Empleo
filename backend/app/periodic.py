@@ -202,12 +202,29 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         ),
     )
 
+    # En SOLO_REVISION la recuperación anterior no persiste las publicaciones
+    # reconocidas. El importador BOE ordinario no puede, por tanto, interpretar
+    # esos mismos documentos como altas nuevas durante el mismo diagnóstico.
+    # Conservamos sus boe_id como sombra exclusivamente en memoria.
+    boe_absorbidos_revision: set[str] = set()
+    if not aplicar:
+        pendientes_revision = resultado["fuentes"].get("boe_pendientes_activos") or {}
+        for detalle in pendientes_revision.get("detalle", []):
+            boe_id = detalle.get("boe_id")
+            if boe_id:
+                boe_absorbidos_revision.add(boe_id)
+            for candidato in detalle.get("boe_local_agregados_propuestos", []) or []:
+                boe_id = candidato.get("boe_id")
+                if boe_id:
+                    boe_absorbidos_revision.add(boe_id)
+
     registrar(
         "boe_local",
         lambda: previsualizar_importacion_boe_local(
             hasta=fecha_hoy,
             dias=dias_solape,
             aplicar=aplicar,
+            boe_ids_absorbidos=boe_absorbidos_revision,
         ),
     )
 
