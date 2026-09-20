@@ -15,6 +15,7 @@ from .gva_cleanup import limpiar_gva_stale, corregir_turnos_gva
 from .gva_estatal_service import diagnosticar_filtros_plazo_gva, importar_gva_estatal
 from .diputacion_alicante import diagnosticar_diputacion_alicante, importar_diputacion_alicante
 from .ayuntamiento_alicante import diagnosticar_ayuntamiento_alicante, importar_ayuntamiento_alicante
+from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
 from .empleo_admin import (
     listar_pendientes_revision,
     actualizar_revision,
@@ -331,6 +332,18 @@ def importar_ayuntamiento_alicante_endpoint(x_import_secret: str | None = Header
     _validar_import_secret(x_import_secret)
     try: return importar_ayuntamiento_alicante(max_detalles=max_detalles)
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Error en importación Ayuntamiento Alicante: {exc}") from exc
+
+@app.post("/admin/import/alicante-bootstrap")
+def importar_alicante_bootstrap_endpoint(
+    aplicar: bool = Query(default=False),
+    max_items: int = Query(default=200, ge=1, le=300),
+    x_import_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return bootstrap_otras_entidades_alicante(max_items=max_items, aplicar=aplicar)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error en bootstrap Alicante: {exc}") from exc
 
 @app.get("/admin/revision/pendientes")
 def revision_pendientes(x_import_secret: str | None = Header(default=None), limite: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:

@@ -14,6 +14,7 @@ import httpx
 
 from .ambito_administrativo import clasificar_ambito_administrativo
 from .database import get_connection
+from .estado_proceso import clasificar_evento_terminal
 from .organismos import resolver_fuente, resolver_organismo
 from .bop_valencia_municipios import (
     _clasificar_anuncio,
@@ -271,7 +272,7 @@ def preparar_importacion_bop_alicante(
 
             cursor.execute(
                 """
-                SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
+                SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,p.tipo_proceso,o.municipio
                 FROM procesos p
                 JOIN organismos o ON o.id=p.organismo_id
                 WHERE o.tipo='AYUNTAMIENTO'
@@ -374,7 +375,7 @@ def importar_bop_alicante(
             if clase == "SEGUIMIENTO":
                 cursor.execute(
                     """
-                    SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
+                    SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,p.tipo_proceso,o.municipio
                     FROM procesos p
                     JOIN organismos o ON o.id=p.organismo_id
                     WHERE o.tipo='AYUNTAMIENTO'
@@ -399,6 +400,15 @@ def importar_bop_alicante(
                     continue
                 proceso_id = proceso["id"]
                 resultado["seguimientos_vinculados"] += 1
+                estado_terminal = clasificar_evento_terminal(
+                    proceso.get("tipo_proceso"),
+                    hallazgo.get("extracto") or hallazgo.get("denominacion"),
+                )
+                if estado_terminal:
+                    cursor.execute(
+                        "UPDATE procesos SET estado=%s,updated_at=NOW() WHERE id=%s",
+                        (estado_terminal, proceso_id),
+                    )
             else:
                 cursor.execute(
                     "SELECT id FROM procesos WHERE identificador_estable=%s",
