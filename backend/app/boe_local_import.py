@@ -353,3 +353,99 @@ def previsualizar_importacion_boe_local(*, hasta: date, dias: int = 30, aplicar:
             connection.rollback()
 
     return resultado
+
+def recuperar_boe_para_proceso_bop(
+    *,
+    proceso_id: int,
+    fecha_bases: date,
+    hasta: date | None = None,
+    max_dias: int = 180,
+    aplicar: bool = False,
+) -> dict[str, Any]:
+    """Recupera BOE histórico para un proceso BOP ya creado, sin ampliar el cron ordinario."""
+    hasta = hasta or date.today()
+    dias = (hasta - fecha_bases).days + 1
+    if dias < 1:
+        return {"modo": "APLICADO" if aplicar else "SOLO_REVISION", "estado": "FUERA_RANGO"}
+    dias = min(dias, max_dias)
+    extraccion = extraer_convocatorias_boe_local(hasta=hasta, dias=dias)
+
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT p.id,p.organismo_id,p.denominacion,p.plazas,p.fecha_convocatoria,
+                   o.nombre AS organismo_nombre,o.provincia
+            FROM procesos p JOIN organismos o ON o.id=p.organismo_id
+            WHERE p.id=%s
+            """,
+            (proceso_id,),
+        )
+        proceso = cursor.fetchone()
+        if not proceso:
+            return {"modo": "APLICADO" if aplicar else "SOLO_REVISION", "estado": "PROCESO_NO_ENCONTRADO"}
+
+        candidatos = []
+        for convocatoria in extraccion["detalle"]:
+            if convocatoria.get("provincia") != proceso["provincia"]:
+                continue
+            if proceso["fecha_convocatoria"] and (convocatoria.get("bases_bop") or {}).get("fecha") != proceso["fecha_convocatoria"].isoformat():
+                continue
+            if _familia(convocatoria.get("denominacion")) != _familia(proceso["denominacion"]):
+                continue
+            if convocatoria.get("plazas") is not None and proceso["plazas"] is not None and convocatoria.get("plazas") != proceso["plazas"]:
+                continue
+            if _sin(proceso["organismo_nombre"]) not in _nombres_entidad(convocatoria.get("entidad")):
+                continue
+            candidatos.append(convocatoria)
+
+        if len(candidatos) != 1:
+            connection.rollback()
+            return {
+                "modo": "APLICADO" if aplicar else "SOLO_REVISION",
+                "estado": "SIN_COINCIDENCIA" if not candidatos else "REVISION_SOLAPAMIENTO",
+                "candidatos": len(candidatos),
+                "dias_revisados": dias,
+                "errores": extraccion["errores"],
+            }
+
+        convocatoria = candidatos[0]
+        codigo = convocatoria["codigo_externo"]
+        if not aplicar:
+            connection.rollback()
+            return {
+                "modo": "SOLO_REVISION",
+                "estado": "COINCIDENCIA_UNICA",
+                "codigo_externo": codigo,
+                "boe_id": convocatoria.get("boe_id"),
+                "fecha_boe": convocatoria.get("fecha_boe"),
+                "plazo_solicitudes_literal": convocatoria.get("plazo_solicitudes_literal"),
+            }
+
+        fuente_boe = resolver_fuente(cursor, nombre="Boletín Oficial del Estado", tipo="BOE")
+        datos_boe = _datos_boe(convocatoria, codigo)
+        cursor.execute(
+            """
+            UPDATE procesos
+            SET datos_json = COALESCE(datos_json,'{}'::jsonb) || %s,
+                ultima_publicacion_at = GREATEST(
+                    COALESCE(ultima_publicacion_at, %s::date::timestamptz),
+                    %s::date::timestamptz
+                ),
+                updated_at=NOW()
+            WHERE id=%s
+            """,
+            (Jsonb({"boe_local": datos_boe}), convocatoria.get("fecha_boe"), convocatoria.get("fecha_boe"), proceso_id),
+        )
+        creada = _insertar_publicacion_boe(
+            cursor, fuente_id=fuente_boe["id"], proceso_id=proceso_id,
+            convocatoria=convocatoria, codigo=codigo,
+        )
+        connection.commit()
+        return {
+            "modo": "APLICADO",
+            "estado": "VINCULADA",
+            "codigo_externo": codigo,
+            "boe_id": convocatoria.get("boe_id"),
+            "fecha_boe": convocatoria.get("fecha_boe"),
+            "publicacion_creada": creada,
+        }
