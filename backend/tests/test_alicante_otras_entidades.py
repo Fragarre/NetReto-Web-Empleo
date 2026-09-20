@@ -72,7 +72,7 @@ def test_fuente_real_solo_lectura():
         f"candidatas={len(candidatas)} terminales={len(terminales)} "
         f"excluidas={len(excluidas)}"
     )
-    for x in (terminales[:3] + candidatas[:5]):
+    for x in candidatas:
         print(
             "ALICANTE_CASO",
             x.get("estado_revision"),
@@ -80,4 +80,7 @@ def test_fuente_real_solo_lectura():
             x.get("denominacion"),
             "|",
             x.get("entidad"),
+            "| inicio=", x.get("fecha_inicio_presentacion"),
+            "| fin=", x.get("fecha_fin_presentacion"),
+            "| obs=", x.get("observaciones"),
         )
