@@ -272,7 +272,7 @@ def preparar_importacion_bop_alicante(
 
             cursor.execute(
                 """
-                SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
+                SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,p.tipo_proceso,o.municipio
                 FROM procesos p
                 JOIN organismos o ON o.id=p.organismo_id
                 WHERE o.tipo='AYUNTAMIENTO'
@@ -375,7 +375,7 @@ def importar_bop_alicante(
             if clase == "SEGUIMIENTO":
                 cursor.execute(
                     """
-                    SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,o.municipio
+                    SELECT p.id,p.denominacion,p.codigo_externo,p.fecha_convocatoria,p.tipo_proceso,o.municipio
                     FROM procesos p
                     JOIN organismos o ON o.id=p.organismo_id
                     WHERE o.tipo='AYUNTAMIENTO'
