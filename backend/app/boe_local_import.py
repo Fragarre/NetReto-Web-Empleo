@@ -384,20 +384,19 @@ def recuperar_boe_para_proceso_bop(
         if not proceso:
             return {"modo": "APLICADO" if aplicar else "SOLO_REVISION", "estado": "PROCESO_NO_ENCONTRADO"}
 
-        candidatos = []
+        candidatos_documento: dict[str, dict[str, Any]] = {}
         for convocatoria in extraccion["detalle"]:
             if convocatoria.get("provincia") != proceso["provincia"]:
                 continue
             if proceso["fecha_convocatoria"] and (convocatoria.get("bases_bop") or {}).get("fecha") != proceso["fecha_convocatoria"].isoformat():
                 continue
-            if _familia(convocatoria.get("denominacion")) != _familia(proceso["denominacion"]):
-                continue
-            if convocatoria.get("plazas") is not None and proceso["plazas"] is not None and convocatoria.get("plazas") != proceso["plazas"]:
-                continue
             if _sin(proceso["organismo_nombre"]) not in _nombres_entidad(convocatoria.get("entidad")):
                 continue
-            candidatos.append(convocatoria)
+            boe_id = convocatoria.get("boe_id")
+            if boe_id:
+                candidatos_documento.setdefault(boe_id, convocatoria)
 
+        candidatos = list(candidatos_documento.values())
         if len(candidatos) != 1:
             connection.rollback()
             return {
