@@ -14,6 +14,31 @@ from .bop_alicante import seleccionar_proceso_seguimiento
 from .database import get_connection
 from .organismos import resolver_fuente, resolver_organismo
 
+
+
+_NUMEROS_PLAZAS = {
+    "UNA": 1, "UN": 1, "DOS": 2, "TRES": 3, "CUATRO": 4, "CINCO": 5,
+    "SEIS": 6, "SIETE": 7, "OCHO": 8, "NUEVE": 9, "DIEZ": 10,
+    "ONCE": 11, "DOCE": 12, "TRECE": 13, "CATORCE": 14, "QUINCE": 15,
+    "DIECISEIS": 16, "DIECISIETE": 17, "DIECIOCHO": 18, "DIECINUEVE": 19,
+    "VEINTE": 20,
+}
+
+
+def _extraer_plazas_titulo(titulo: str | None) -> int | None:
+    """Extrae el número de plazas cuando el título del BOP lo declara explícitamente."""
+    import re
+    import unicodedata
+
+    normal = unicodedata.normalize("NFKD", titulo or "").encode("ascii", "ignore").decode().upper()
+    m = re.search(r"\b(\d+)\s+PLAZAS?\b", normal)
+    if m:
+        return int(m.group(1))
+    palabras = "|".join(_NUMEROS_PLAZAS)
+    m = re.search(rf"\b({palabras})\s+PLAZAS?\b", normal)
+    return _NUMEROS_PLAZAS.get(m.group(1)) if m else None
+
+
 PORTAL = "https://bop.dipcas.es/PortalBOP/"
 DESCARGA = "https://bop.dipcas.es/PortalBOP/api/descargarAnuncio"
 
@@ -276,6 +301,7 @@ def consultar_bop_castellon(*, desde: date | None = None, hasta: date | None = N
         item = dict(anuncio)
         item["ambito_administrativo"] = ambito
         item["clase"] = _clasificar_anuncio_castellon(item["titulo"])
+        item["plazas"] = _extraer_plazas_titulo(item["titulo"])
         candidatos.append(item)
     from collections import Counter
     conteo = Counter(x["clase"] for x in candidatos)
@@ -603,6 +629,11 @@ def importar_bop_castellon(
                 if existente:
                     proceso_id = existente["id"]
                     resultado["existentes"] += 1
+                    if hallazgo.get("plazas") is not None:
+                        cursor.execute(
+                            "UPDATE procesos SET plazas=%s,updated_at=NOW() WHERE id=%s AND plazas IS NULL",
+                            (hallazgo["plazas"], proceso_id),
+                        )
                 else:
                     if identidad["tipo"] == "AYUNTAMIENTO":
                         municipio = identidad["municipio"]
@@ -654,9 +685,9 @@ def importar_bop_castellon(
                         """
                         INSERT INTO procesos
                             (organismo_id,codigo_externo,identificador_estable,denominacion,
-                             estado,fecha_convocatoria,fuente_principal_id,es_oportunidad,
+                             estado,plazas,fecha_convocatoria,fuente_principal_id,es_oportunidad,
                              ambito_administrativo,datos_json,updated_at)
-                        VALUES (%s,%s,%s,%s,'EN_CURSO',%s,%s,TRUE,'SI',%s,NOW())
+                        VALUES (%s,%s,%s,%s,'EN_CURSO',%s,%s,%s,TRUE,'SI',%s,NOW())
                         RETURNING id
                         """,
                         (
@@ -664,6 +695,7 @@ def importar_bop_castellon(
                             hallazgo["id_anuncio"],
                             hallazgo["referencia"],
                             hallazgo["titulo"],
+                            hallazgo.get("plazas"),
                             fecha_publicacion,
                             fuente_id,
                             Jsonb({
