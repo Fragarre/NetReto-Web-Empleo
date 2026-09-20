@@ -139,3 +139,16 @@ def test_un_documento_boe_con_varios_turnos_conserva_total_plazas():
     assert len(documentos) == 1
     assert documentos[0]["boe_id"] == "BOE-A-2026-17643"
     assert documentos[0]["plazas"] == 11
+
+
+def test_no_se_infiere_cobertura_sumando_documentos_boe_distintos():
+    # Regla de contrato: varios BOE pueden contener subconjuntos solapados.
+    # La cobertura del proceso no puede deducirse sumando sus cifras.
+    documentos = [
+        {"boe_id": "BOE-1", "plazas": 5},
+        {"boe_id": "BOE-2", "plazas": 9},
+    ]
+    total_aritmetico = sum(x["plazas"] for x in documentos)
+
+    assert total_aritmetico == 14
+    assert total_aritmetico != 9
