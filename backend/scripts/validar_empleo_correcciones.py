@@ -8,6 +8,8 @@ def main() -> int:
     municipales = (ROOT / "app" / "bop_valencia_municipios.py").read_text(encoding="utf-8")
     gva_persist = (ROOT / "app" / "gva_estatal_persist.py").read_text(encoding="utf-8")
     cron = (ROOT / "app" / "cron_actualizacion.py").read_text(encoding="utf-8")
+    boe = (ROOT / "app" / "boe_local_import.py").read_text(encoding="utf-8")
+    castellon = (ROOT / "app" / "bop_castellon.py").read_text(encoding="utf-8")
 
     if "fecha.year not in {2026, 2027}" in bop:
         raise AssertionError("Sigue existiendo el límite artificial 2026/2027 en BOP Valencia")
@@ -32,6 +34,28 @@ def main() -> int:
 
     if "VENTANA_GVA_DIAS = 3" not in cron:
         raise AssertionError("La actualización GVA no conserva el solape técnico corto acordado")
+
+    if "def recuperar_boe_para_proceso_bop(" not in boe:
+        raise AssertionError("Falta recuperación BOE histórica selectiva")
+
+    if 'if "/" in nombre:' not in boe or "nombre.split" not in boe:
+        raise AssertionError("Falta normalización de variantes oficiales como Benicàssim/Benicasim")
+
+    if "len(candidatos) != 1" not in boe:
+        raise AssertionError("La recuperación BOE no exige coincidencia única")
+
+    if "recuperar_boe_para_proceso_bop(" not in castellon:
+        raise AssertionError("El alta BOP Castellón no activa la recuperación BOE")
+
+    # Casos funcionales puros: coincidencia exacta y variante oficial con barra.
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from app.boe_local_import import _nombres_entidad
+    if "ayuntamiento de moncofa" not in _nombres_entidad("Ayuntamiento de Moncofa"):
+        raise AssertionError("Moncofa no normaliza de forma exacta")
+    variantes = _nombres_entidad("Ayuntamiento de Benicàssim/Benicasim")
+    if "ayuntamiento de benicassim" not in variantes or "ayuntamiento de benicasim" not in variantes:
+        raise AssertionError("Benicàssim/Benicasim no genera ambas variantes oficiales")
 
     print("VALIDACION_CORRECCIONES_EMPLEO_OK")
     return 0
