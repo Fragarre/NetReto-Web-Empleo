@@ -162,7 +162,7 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
                 "fecha_cierre": cierre_calculado,
                 "fecha_cierre_calculada": True,
                 "fecha_cierre_sin_festivos_locales": True,
-                "aviso_festivos_locales": "Confirmar fechas en función de días festivos en este municipio",
+                "aviso_festivos_locales": "Confirmar fechas en función de días festivos exclusivos de este municipio",
                 "dias_habiles": dias,
                 "literal": literal,
             }
