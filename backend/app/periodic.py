@@ -6,7 +6,9 @@ from typing import Any, Callable
 
 import httpx
 
-from .boe_local_import import previsualizar_importacion_boe_local
+from .boe_local_import import previsualizar_importacion_boe_local, recuperar_boe_para_proceso_bop
+from .database import get_connection
+from psycopg.rows import dict_row
 from .bop_valencia_patch import diagnosticar_bop, importar_bop_valencia
 from .bop_valencia_municipios import importar_municipales_bop
 from .bop_castellon import importar_bop_castellon
@@ -46,6 +48,53 @@ def _ejecutar_fuente(funcion: Callable[[], Any]) -> tuple[Any, dict[str, Any]]:
         error = f"{type(exc).__name__}: {str(exc)[:500]}"
         traza = traceback.format_exc()
         return {"error": error, "traceback": traza}, {"estado": "ERROR", "error": error, "traceback": traza}
+
+
+def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str, Any]:
+    """Busca BOE solo para oportunidades activas BOP ya aceptadas y aún no vinculadas."""
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT p.id,p.fecha_convocatoria
+            FROM procesos p
+            WHERE p.es_oportunidad=TRUE
+              AND p.estado='EN_CURSO'
+              AND p.ambito_administrativo='SI'
+              AND p.fecha_convocatoria IS NOT NULL
+              AND p.datos_json->'boe_local' IS NULL
+              AND p.datos_json->>'origen' IN ('BOP_VALENCIA','BOP_CASTELLON','BOP_ALICANTE')
+            ORDER BY p.id
+            """
+        )
+        pendientes = list(cursor.fetchall())
+
+    resultado: dict[str, Any] = {
+        "modo": "APLICADO" if aplicar else "SOLO_REVISION",
+        "pendientes": len(pendientes),
+        "coincidencias_unicas": 0,
+        "vinculadas": 0,
+        "sin_coincidencia": 0,
+        "revision_solapamiento": 0,
+        "detalle": [],
+    }
+    for proceso in pendientes:
+        r = recuperar_boe_para_proceso_bop(
+            proceso_id=proceso["id"],
+            fecha_bases=proceso["fecha_convocatoria"],
+            hasta=hasta,
+            aplicar=aplicar,
+        )
+        estado = r.get("estado")
+        if estado in ("COINCIDENCIA_UNICA", "VINCULADA"):
+            resultado["coincidencias_unicas"] += 1
+        if estado == "VINCULADA":
+            resultado["vinculadas"] += 1
+        elif estado == "SIN_COINCIDENCIA":
+            resultado["sin_coincidencia"] += 1
+        elif estado == "REVISION_SOLAPAMIENTO":
+            resultado["revision_solapamiento"] += 1
+        resultado["detalle"].append({"proceso_id": proceso["id"], **r})
+    return resultado
 
 
 def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_solape: int = DIAS_SOLAPE_DEFECTO) -> dict[str, Any]:
@@ -141,6 +190,14 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         lambda: previsualizar_importacion_boe_local(
             hasta=fecha_hoy,
             dias=dias_solape,
+            aplicar=aplicar,
+        ),
+    )
+
+    registrar(
+        "boe_pendientes_activos",
+        lambda: _recuperar_boe_pendientes_activos(
+            hasta=fecha_hoy,
             aplicar=aplicar,
         ),
     )
