@@ -12,7 +12,7 @@ DEFAULT_API = "https://netreto-empleo-api.onrender.com"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Ejecuta el ciclo periódico de NetReto Empleo vía API segura")
+    parser = argparse.ArgumentParser(description="Ejecuta el ciclo periódico de TuCoach Empleo vía API segura")
     parser.add_argument("--aplicar", action="store_true", help="Aplica cambios; sin esta opción solo revisa")
     parser.add_argument("--dias", type=int, default=7, help="Días de solape (1-30)")
     args = parser.parse_args()
