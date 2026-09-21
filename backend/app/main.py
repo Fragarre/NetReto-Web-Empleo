@@ -41,7 +41,7 @@ from .seguimiento import (
     marcar_novedades_vistas,
 )
 
-app = FastAPI(title="NetReto Empleo API", version="0.1.0")
+app = FastAPI(title="TuCoach Empleo API", version="0.1.0")
 app.include_router(empleo_admin_router)
 app.include_router(empleo_admin_catalogo_router)
 

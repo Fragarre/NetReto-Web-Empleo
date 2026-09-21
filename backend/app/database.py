@@ -11,7 +11,7 @@ def get_connection() -> Iterator[Connection]:
     """Abre una conexión PostgreSQL para una operación del backend.
 
     DATABASE_URL debe apuntar a la base de datos PostgreSQL independiente
-    de NetReto Empleo. La conexión se cierra siempre al finalizar el bloque.
+    de TuCoach Empleo. La conexión se cierra siempre al finalizar el bloque.
     """
     database_url = os.getenv("DATABASE_URL")
     if not database_url:

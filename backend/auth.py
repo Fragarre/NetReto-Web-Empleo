@@ -47,7 +47,7 @@ def obtener_supabase_public_key() -> str:
 
 
 def validar_access_token(token: str) -> UsuarioAutenticado:
-    """Valida el access token mediante el mismo Supabase Auth que usa OpoCoach-Web."""
+    """Valida el access token mediante el mismo Supabase Auth que usa TuCoach-Web."""
     try:
         respuesta = _supabase_http.get(
             f"{obtener_supabase_url()}/auth/v1/user",
