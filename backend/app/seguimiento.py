@@ -1,3 +1,8 @@
+import os
+
+import psycopg
+from psycopg.rows import dict_row
+
 from typing import Any
 from uuid import UUID
 from datetime import datetime
@@ -302,6 +307,34 @@ def preparar_notificaciones() -> dict[str, Any]:
             )
             pendientes = int(cursor.fetchone()[0])
     return {"creadas": creadas, "pendientes": pendientes, "envio": "no_realizado"}
+
+
+def emails_usuarios(user_ids: set[UUID]) -> dict[UUID, str]:
+    """Resuelve emails de perfiles activos en la base central de Tu Coach."""
+    if not user_ids:
+        return {}
+
+    database_url = os.getenv("TUCOACH_DATABASE_URL", "").strip()
+    if not database_url:
+        raise RuntimeError("TUCOACH_DATABASE_URL no está configurada")
+
+    with psycopg.connect(database_url, connect_timeout=10) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT id, email
+                FROM public.profiles
+                WHERE id = ANY(%s)
+                  AND activo = TRUE
+                  AND email IS NOT NULL
+                  AND TRIM(email) <> ''
+                """,
+                (list(user_ids),),
+            )
+            return {
+                row["id"]: str(row["email"]).strip()
+                for row in cursor.fetchall()
+            }
 
 
 def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any]]:
