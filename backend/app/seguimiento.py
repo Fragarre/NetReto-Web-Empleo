@@ -1,4 +1,5 @@
 import os
+from html import escape
 
 import psycopg
 from psycopg.rows import dict_row
@@ -8,6 +9,7 @@ from uuid import UUID
 from datetime import datetime
 
 from .database import get_connection
+from .email_sender import enviar_email
 
 
 CAMPOS_CAMBIO_RELEVANTES = (
@@ -367,3 +369,96 @@ def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any
             rows = cursor.fetchall()
             columns = [description.name for description in cursor.description]
     return [dict(zip(columns, row)) for row in rows]
+
+def enviar_notificaciones_pendientes(*, limite: int = 100) -> dict[str, int]:
+    """Envía avisos pendientes de seguimiento de forma aislada por notificación."""
+    pendientes = listar_notificaciones_pendientes(limite=limite)
+    if not pendientes:
+        return {"procesadas": 0, "enviadas": 0, "errores": 0}
+
+    user_ids = {UUID(str(item["user_id"])) for item in pendientes}
+    emails = emails_usuarios(user_ids)
+
+    public_app_url = os.getenv(
+        "PUBLIC_APP_URL",
+        "https://netexamenes.com",
+    ).strip().rstrip("/")
+
+    enviadas = 0
+    errores = 0
+
+    for item in pendientes:
+        notificacion_id = int(item["id"])
+        user_id = UUID(str(item["user_id"]))
+        email = emails.get(user_id)
+
+        try:
+            if not email:
+                raise RuntimeError("No se encontró email activo para el usuario")
+
+            denominacion = str(item["denominacion"] or "Convocatoria")
+            resumen = str(item["resumen"] or "Se ha registrado una novedad.")
+            proceso_id = int(item["proceso_id"])
+            url = f"{public_app_url}/empleo/proceso/{proceso_id}"
+
+            asunto = f"Tu Coach — Novedad en {denominacion}"
+            texto = (
+                f"Hay una novedad en una convocatoria que sigues.\n\n"
+                f"{denominacion}\n"
+                f"{resumen}\n\n"
+                f"Consulta la convocatoria: {url}"
+            )
+            html = (
+                "<p>Hay una novedad en una convocatoria que sigues.</p>"
+                f"<p><strong>{escape(denominacion)}</strong></p>"
+                f"<p>{escape(resumen)}</p>"
+                f'<p><a href="{escape(url, quote=True)}">Consultar convocatoria</a></p>'
+            )
+
+            enviar_email(
+                destinatario=email,
+                asunto=asunto,
+                html=html,
+                texto=texto,
+            )
+
+            with get_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE notificaciones
+                        SET estado = 'ENVIADA',
+                            enviado_at = now(),
+                            error = NULL
+                        WHERE id = %s
+                          AND estado = 'PENDIENTE'
+                        """,
+                        (notificacion_id,),
+                    )
+                    connection.commit()
+
+            enviadas += 1
+
+        except Exception as exc:
+            with get_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE notificaciones
+                        SET estado = 'ERROR',
+                            error = %s
+                        WHERE id = %s
+                          AND estado = 'PENDIENTE'
+                        """,
+                        (str(exc)[:2000], notificacion_id),
+                    )
+                    connection.commit()
+
+            errores += 1
+
+    return {
+        "procesadas": len(pendientes),
+        "enviadas": enviadas,
+        "errores": errores,
+    }
+
