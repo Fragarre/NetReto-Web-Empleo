@@ -15,7 +15,7 @@ from .bop_castellon import importar_bop_castellon
 from .bop_alicante import importar_bop_alicante
 from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
 from .gva_estatal_service import importar_gva_estatal
-from .notificaciones_generales import ids_oportunidades_visibles, registrar_nuevas_oportunidades
+from .notificaciones_generales import ids_oportunidades_visibles, preparar_envios_eventos, registrar_nuevas_oportunidades
 
 
 DIAS_SOLAPE_DEFECTO = 7
@@ -254,9 +254,11 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         visibles_despues = ids_oportunidades_visibles()
         nuevos_visibles = visibles_despues - visibles_antes
         eventos_creados = registrar_nuevas_oportunidades(nuevos_visibles)
+        envios_preparados = preparar_envios_eventos(eventos_creados)
         resultado["notificaciones_generales"] = {
             "nuevas_oportunidades_visibles": len(nuevos_visibles),
             "eventos_creados": len(eventos_creados),
+            "envios_preparados": envios_preparados,
         }
 
     resultado["resumen_fuentes"] = {
