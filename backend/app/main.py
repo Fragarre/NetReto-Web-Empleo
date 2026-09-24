@@ -32,6 +32,7 @@ from .procesos import listar_procesos, obtener_proceso
 from .seguimiento import (
     preparar_notificaciones,
     listar_notificaciones_pendientes,
+    enviar_notificaciones_pendientes,
     suscripciones_usuario,
     suscripcion_usuario_proceso,
     suscribirse,
@@ -166,6 +167,21 @@ def notificaciones_pendientes_endpoint(x_import_secret: str | None = Header(defa
     _validar_import_secret(x_import_secret)
     try: return listar_notificaciones_pendientes(limite=limite)
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Error listando notificaciones: {exc}") from exc
+
+@app.post("/admin/seguimiento/enviar-notificaciones")
+def enviar_notificaciones_endpoint(
+    x_import_secret: str | None = Header(default=None),
+    limite: int = Query(default=100, ge=1, le=500),
+) -> dict[str, int]:
+    _validar_import_secret(x_import_secret)
+    try:
+        return enviar_notificaciones_pendientes(limite=limite)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Error enviando notificaciones: {exc}",
+        ) from exc
+
 
 @app.post("/admin/import/gva")
 def importar_gva_endpoint(x_import_secret: str | None = Header(default=None), max_paginas: int = Query(default=3, ge=1, le=10), max_detalles: int | None = Query(default=None, ge=1, le=300)) -> dict[str, Any]:
