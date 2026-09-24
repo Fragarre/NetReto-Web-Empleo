@@ -100,6 +100,7 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
         "registrar_nuevas_oportunidades",
         lambda proceso_ids: registrados.extend(sorted(proceso_ids)) or [900],
     )
+    monkeypatch.setattr(periodic, "preparar_envios_eventos", lambda evento_ids: 2)
 
     salida = periodic.ejecutar_periodico(aplicar=True, hoy=periodic.date(2026, 9, 18), dias_solape=7)
 
@@ -119,7 +120,13 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
     assert salida["fuentes"]["gva"] == {"marca": "gva"}
     assert salida["estado_fuentes"]["bop_valencia_diputacion"]["estado"] == "ERROR"
     assert salida["resumen_fuentes"]["errores"] == 1
-    assert registrados == [30]\n    assert salida["notificaciones_generales"] == {\n        "nuevas_oportunidades_visibles": 1,\n        "eventos_creados": 1,\n    }\n
+    assert registrados == [30]
+    assert salida["notificaciones_generales"] == {
+        "nuevas_oportunidades_visibles": 1,
+        "eventos_creados": 1,
+        "envios_preparados": 2,
+    }
+
 
 def test_periodico_revision_pasa_boe_absorbidos_al_importador(monkeypatch):
     import app.periodic as periodic
