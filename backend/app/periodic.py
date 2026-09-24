@@ -16,6 +16,7 @@ from .bop_alicante import importar_bop_alicante
 from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
 from .gva_estatal_service import importar_gva_estatal
 from .notificaciones_generales import ids_oportunidades_visibles, preparar_envios_eventos, registrar_nuevas_oportunidades
+from .seguimiento import preparar_notificaciones, enviar_notificaciones_pendientes
 
 
 DIAS_SOLAPE_DEFECTO = 7
@@ -258,6 +259,13 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
             "nuevas_oportunidades_visibles": len(nuevos_visibles),
             "eventos_creados": len(eventos_creados),
             "envios_preparados": envios_preparados,
+        }
+
+        seguimiento_preparado = preparar_notificaciones()
+        seguimiento_enviado = enviar_notificaciones_pendientes()
+        resultado["notificaciones_seguimiento"] = {
+            "preparacion": seguimiento_preparado,
+            "envio": seguimiento_enviado,
         }
 
     resultado["resumen_fuentes"] = {

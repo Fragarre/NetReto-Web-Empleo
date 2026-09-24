@@ -101,6 +101,16 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
         lambda proceso_ids: registrados.extend(sorted(proceso_ids)) or [900],
     )
     monkeypatch.setattr(periodic, "preparar_envios_eventos", lambda evento_ids: 2)
+    monkeypatch.setattr(
+        periodic,
+        "preparar_notificaciones",
+        lambda: {"creadas": 3},
+    )
+    monkeypatch.setattr(
+        periodic,
+        "enviar_notificaciones_pendientes",
+        lambda: {"procesadas": 3, "enviadas": 3, "errores": 0},
+    )
 
     salida = periodic.ejecutar_periodico(aplicar=True, hoy=periodic.date(2026, 9, 18), dias_solape=7)
 
@@ -121,6 +131,10 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
     assert salida["estado_fuentes"]["bop_valencia_diputacion"]["estado"] == "ERROR"
     assert salida["resumen_fuentes"]["errores"] == 1
     assert registrados == [30]
+    assert salida["notificaciones_seguimiento"] == {
+        "preparacion": {"creadas": 3},
+        "envio": {"procesadas": 3, "enviadas": 3, "errores": 0},
+    }
     assert salida["notificaciones_generales"] == {
         "nuevas_oportunidades_visibles": 1,
         "eventos_creados": 1,
