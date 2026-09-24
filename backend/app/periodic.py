@@ -15,6 +15,7 @@ from .bop_castellon import importar_bop_castellon
 from .bop_alicante import importar_bop_alicante
 from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
 from .gva_estatal_service import importar_gva_estatal
+from .notificaciones_generales import ids_oportunidades_visibles, registrar_nuevas_oportunidades
 
 
 DIAS_SOLAPE_DEFECTO = 7
@@ -79,6 +80,8 @@ def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str
             """
         )
         pendientes = list(cursor.fetchall())
+
+    visibles_antes = ids_oportunidades_visibles() if aplicar else set()
 
     resultado: dict[str, Any] = {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
@@ -247,6 +250,15 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
     )
 
     estados = [fuente["estado"] for fuente in resultado["estado_fuentes"].values()]
+    if aplicar:
+        visibles_despues = ids_oportunidades_visibles()
+        nuevos_visibles = visibles_despues - visibles_antes
+        eventos_creados = registrar_nuevas_oportunidades(nuevos_visibles)
+        resultado["notificaciones_generales"] = {
+            "nuevas_oportunidades_visibles": len(nuevos_visibles),
+            "eventos_creados": len(eventos_creados),
+        }
+
     resultado["resumen_fuentes"] = {
         "total": len(estados),
         "ok": sum(e == "OK" for e in estados),
