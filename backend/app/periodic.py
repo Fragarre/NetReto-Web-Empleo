@@ -15,7 +15,7 @@ from .bop_castellon import importar_bop_castellon
 from .bop_alicante import importar_bop_alicante
 from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
 from .gva_estatal_service import importar_gva_estatal
-from .notificaciones_generales import ids_oportunidades_visibles, preparar_envios_eventos, registrar_nuevas_oportunidades
+from .notificaciones_generales import enviar_envios_pendientes, ids_oportunidades_visibles, preparar_envios_eventos, registrar_nuevas_oportunidades
 from .seguimiento import preparar_notificaciones, enviar_notificaciones_pendientes
 
 
@@ -255,10 +255,12 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
         nuevos_visibles = visibles_despues - visibles_antes
         eventos_creados = registrar_nuevas_oportunidades(nuevos_visibles)
         envios_preparados = preparar_envios_eventos(eventos_creados)
+        envios_enviados = enviar_envios_pendientes()
         resultado["notificaciones_generales"] = {
             "nuevas_oportunidades_visibles": len(nuevos_visibles),
             "eventos_creados": len(eventos_creados),
             "envios_preparados": envios_preparados,
+            "envio": envios_enviados,
         }
 
         seguimiento_preparado = preparar_notificaciones()

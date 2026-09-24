@@ -7,6 +7,7 @@ exactamente el mismo predicado que el catálogo público de Empleo.
 from __future__ import annotations
 
 import os
+from html import escape
 from typing import Iterable
 from uuid import UUID
 
@@ -14,6 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from .database import get_connection
+from .email_sender import enviar_email
 from .procesos import _condiciones_catalogo
 
 
@@ -121,3 +123,129 @@ def registrar_nuevas_oportunidades(proceso_ids: Iterable[int]) -> list[int]:
                 creados.append(int(row[0]))
         connection.commit()
     return creados
+
+def enviar_envios_pendientes(*, limite: int = 100) -> dict[str, int]:
+    """Envía las notificaciones generales pendientes de nuevas oportunidades."""
+    with get_connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                en.id,
+                en.email,
+                e.proceso_id,
+                p.denominacion,
+                p.plazas,
+                p.sistema_selectivo,
+                p.fecha_convocatoria,
+                p.fecha_apertura,
+                p.fecha_cierre,
+                o.nombre AS organismo,
+                o.provincia
+            FROM empleo_envios_notificacion en
+            JOIN empleo_eventos_notificacion e ON e.id = en.evento_id
+            JOIN procesos p ON p.id = e.proceso_id
+            JOIN organismos o ON o.id = p.organismo_id
+            WHERE en.estado = 'PENDIENTE'
+              AND e.tipo = %s
+            ORDER BY en.created_at, en.id
+            LIMIT %s
+            """,
+            (TIPO_NUEVA_OPORTUNIDAD, limite),
+        )
+        pendientes = list(cursor.fetchall())
+
+    if not pendientes:
+        return {"procesadas": 0, "enviadas": 0, "errores": 0}
+
+    public_app_url = os.getenv("PUBLIC_APP_URL", "https://netexamenes.com").rstrip("/")
+    enviadas = 0
+    errores = 0
+
+    for pendiente in pendientes:
+        envio_id = int(pendiente["id"])
+        proceso_id = int(pendiente["proceso_id"])
+        denominacion = str(pendiente["denominacion"])
+        url = f"{public_app_url}/empleo/proceso/{proceso_id}"
+
+        datos = [
+            ("Organismo", pendiente["organismo"]),
+            ("Provincia", pendiente["provincia"]),
+            ("Plazas", pendiente["plazas"]),
+            ("Sistema selectivo", pendiente["sistema_selectivo"]),
+            ("Fecha de convocatoria", pendiente["fecha_convocatoria"]),
+            ("Apertura del plazo", pendiente["fecha_apertura"]),
+            ("Cierre del plazo", pendiente["fecha_cierre"]),
+        ]
+        lineas = [
+            f"{etiqueta}: {valor}"
+            for etiqueta, valor in datos
+            if valor is not None and str(valor).strip()
+        ]
+
+        asunto = f"Nueva oportunidad de empleo: {denominacion}"
+        texto = "\n".join(
+            [
+                "Se ha publicado una nueva oportunidad de empleo.",
+                "",
+                denominacion,
+                *lineas,
+                "",
+                f"Ver convocatoria: {url}",
+            ]
+        )
+        html_datos = "".join(
+            f"<li><strong>{escape(etiqueta)}:</strong> {escape(str(valor))}</li>"
+            for etiqueta, valor in datos
+            if valor is not None and str(valor).strip()
+        )
+        html = (
+            "<p>Se ha publicado una nueva oportunidad de empleo.</p>"
+            f"<p><strong>{escape(denominacion)}</strong></p>"
+            f"<ul>{html_datos}</ul>"
+            f'<p><a href="{escape(url)}">Ver convocatoria</a></p>'
+        )
+
+        try:
+            resultado = enviar_email(
+                destinatario=str(pendiente["email"]),
+                asunto=asunto,
+                html=html,
+                texto=texto,
+            )
+            with get_connection() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE empleo_envios_notificacion
+                    SET estado = 'ENVIADA',
+                        proveedor_message_id = %s,
+                        enviado_at = NOW(),
+                        error = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s
+                      AND estado = 'PENDIENTE'
+                    """,
+                    (resultado.message_id, envio_id),
+                )
+                connection.commit()
+            enviadas += 1
+        except Exception as exc:
+            with get_connection() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE empleo_envios_notificacion
+                    SET estado = 'ERROR',
+                        error = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                      AND estado = 'PENDIENTE'
+                    """,
+                    (f"{type(exc).__name__}: {exc}"[:2000], envio_id),
+                )
+                connection.commit()
+            errores += 1
+
+    return {
+        "procesadas": len(pendientes),
+        "enviadas": enviadas,
+        "errores": errores,
+    }

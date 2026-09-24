@@ -101,6 +101,7 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
         lambda proceso_ids: registrados.extend(sorted(proceso_ids)) or [900],
     )
     monkeypatch.setattr(periodic, "preparar_envios_eventos", lambda evento_ids: 2)
+    monkeypatch.setattr(periodic, "enviar_envios_pendientes", lambda: {"procesadas": 2, "enviadas": 2, "errores": 0})
     monkeypatch.setattr(
         periodic,
         "preparar_notificaciones",
@@ -139,6 +140,7 @@ def test_periodico_conserva_payloads_y_continua_tras_fallo(monkeypatch):
         "nuevas_oportunidades_visibles": 1,
         "eventos_creados": 1,
         "envios_preparados": 2,
+        "envio": {"procesadas": 2, "enviadas": 2, "errores": 0},
     }
 
 
