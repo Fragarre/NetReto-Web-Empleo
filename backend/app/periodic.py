@@ -81,8 +81,6 @@ def _recuperar_boe_pendientes_activos(*, hasta: date, aplicar: bool) -> dict[str
         )
         pendientes = list(cursor.fetchall())
 
-    visibles_antes = ids_oportunidades_visibles() if aplicar else set()
-
     resultado: dict[str, Any] = {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
         "pendientes": len(pendientes),
@@ -139,6 +137,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
 
     fecha_hoy = hoy or date.today()
     desde = fecha_hoy - timedelta(days=dias_solape - 1)
+    visibles_antes = ids_oportunidades_visibles() if aplicar else set()
     resultado: dict[str, Any] = {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
         "escrituras_bd": aplicar,
