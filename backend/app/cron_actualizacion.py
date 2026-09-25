@@ -8,7 +8,7 @@ import httpx
 
 
 BASE_URL = os.getenv("NETRETO_EMPLEO_API_URL", "https://netreto-empleo-api.onrender.com").rstrip("/")
-SECRET = os.getenv("EMPLOYMENT_IMPORT_SECRET")
+SECRET = os.getenv("EMPLOYMENT_CRON_SECRET")
 
 REINTENTOS = 3
 ESPERAS_REINTENTO = (10, 30)
@@ -22,7 +22,7 @@ def _post_periodico(client: httpx.Client) -> None:
         try:
             response = client.post(
                 f"{BASE_URL}{path}",
-                headers={"X-Import-Secret": SECRET or ""},
+                headers={"X-Cron-Secret": SECRET or ""},
             )
 
             if 400 <= response.status_code < 500:
@@ -63,7 +63,7 @@ def _post_periodico(client: httpx.Client) -> None:
 
 def main() -> int:
     if not SECRET:
-        print("Falta EMPLOYMENT_IMPORT_SECRET", file=sys.stderr)
+        print("Falta EMPLOYMENT_CRON_SECRET", file=sys.stderr)
         return 2
 
     try:
