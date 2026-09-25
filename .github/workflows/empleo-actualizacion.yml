@@ -20,6 +20,6 @@ jobs:
 
       - name: Ejecutar actualización
         env:
-          EMPLOYMENT_IMPORT_SECRET: ${{ secrets.EMPLOYMENT_IMPORT_SECRET }}
+          EMPLOYMENT_CRON_SECRET: ${{ secrets.EMPLOYMENT_CRON_SECRET }}
           NETRETO_EMPLEO_API_URL: https://opocoach-web-staging-backend.onrender.com/empleo
         run: python backend/app/cron_actualizacion.py
