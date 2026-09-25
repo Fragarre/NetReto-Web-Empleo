@@ -60,6 +60,7 @@ SELECT_FIELDS = """
        p.fecha_apertura, p.fecha_cierre, p.fecha_examen,
        p.lugar_examen, p.ultima_publicacion_at,
        p.fuente_principal_id, p.datos_json,
+       (SELECT UPPER(COALESCE(f.tipo, '')) FROM fuentes f WHERE f.id = p.fuente_principal_id) AS fuente_principal_tipo,
        (SELECT MAX(pub_boe.fecha_publicacion) FROM publicaciones pub_boe JOIN fuentes f_boe ON f_boe.id=pub_boe.fuente_id WHERE pub_boe.proceso_id=p.id AND UPPER(COALESCE(f_boe.tipo,''))='BOE') AS fecha_boe_publicacion,
        COALESCE(
            NULLIF(TRIM(COALESCE(p.datos_json->>'url_detalle','')), ''),
@@ -84,6 +85,10 @@ SELECT_FIELDS = """
 
 def _enriquecer_proceso(fila: dict[str, Any]) -> dict[str, Any]:
     enriquecida = dict(fila)
+    datos = dict(enriquecida.get("datos_json") or {})
+    if not datos.get("origen") and str(enriquecida.get("fuente_principal_tipo") or "").upper() == "BOP":
+        datos["origen"] = "BOP_VALENCIA_MUNICIPAL"
+    enriquecida["datos_json"] = datos
     inscripcion = estado_inscripcion(enriquecida)
     enriquecida["estado_inscripcion"] = inscripcion["codigo"]
     enriquecida["inscripcion"] = inscripcion
