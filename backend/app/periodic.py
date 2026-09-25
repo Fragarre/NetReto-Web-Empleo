@@ -16,7 +16,7 @@ from .bop_alicante import importar_bop_alicante
 from .alicante_otras_entidades import bootstrap_otras_entidades_alicante
 from .gva_estatal_service import importar_gva_estatal
 from .notificaciones_generales import enviar_envios_pendientes, ids_oportunidades_visibles, preparar_envios_eventos, registrar_nuevas_oportunidades
-from .seguimiento import preparar_notificaciones, enviar_notificaciones_pendientes
+from .seguimiento import ids_novedades_seguimiento, enviar_avisos_novedades
 
 
 DIAS_SOLAPE_DEFECTO = 7
@@ -139,6 +139,7 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
     fecha_hoy = hoy or date.today()
     desde = fecha_hoy - timedelta(days=dias_solape - 1)
     visibles_antes = ids_oportunidades_visibles() if aplicar else set()
+    novedades_seguimiento_antes = ids_novedades_seguimiento() if aplicar else set()
     resultado: dict[str, Any] = {
         "modo": "APLICADO" if aplicar else "SOLO_REVISION",
         "escrituras_bd": aplicar,
@@ -263,10 +264,8 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
             "envio": envios_enviados,
         }
 
-        seguimiento_preparado = preparar_notificaciones()
-        seguimiento_enviado = enviar_notificaciones_pendientes()
+        seguimiento_enviado = enviar_avisos_novedades(novedades_seguimiento_antes)
         resultado["notificaciones_seguimiento"] = {
-            "preparacion": seguimiento_preparado,
             "envio": seguimiento_enviado,
         }
 

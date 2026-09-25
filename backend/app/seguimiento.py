@@ -265,51 +265,76 @@ def marcar_novedades_vistas(user_id: UUID, hasta: datetime | None) -> dict[str, 
     return {"ultima_novedad_vista_at": row[0], "updated_at": row[1]}
 
 
-def preparar_notificaciones() -> dict[str, Any]:
-    """Crea notificaciones solo para cambios sustantivos de procesos administrativos."""
+def ids_novedades_seguimiento() -> set[tuple[str, int]]:
+    """Fotografía las filas que pueden originar novedades de seguimiento."""
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO notificaciones (suscripcion_id, cambio_id, estado)
-                SELECT s.id, c.id, 'PENDIENTE'
-                FROM suscripciones s
-                JOIN cambios c ON c.proceso_id = s.proceso_id
-                JOIN procesos p ON p.id = s.proceso_id
-                WHERE s.activa = TRUE
-                  AND p.es_oportunidad = TRUE
-                  AND p.ambito_administrativo = 'SI'
-                  AND c.significativo = TRUE
-                  AND c.valor_anterior IS NOT NULL
-                  AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
-                  AND LOWER(COALESCE(c.valor_anterior, '')) NOT IN ('navegación', 'navegacion')
-                ON CONFLICT (suscripcion_id, cambio_id) DO NOTHING
-                RETURNING id
-                """,
-                (list(CAMPOS_CAMBIO_RELEVANTES),),
-            )
-            creadas = len(cursor.fetchall())
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM notificaciones n
-                JOIN suscripciones s ON s.id = n.suscripcion_id
-                JOIN cambios c ON c.id = n.cambio_id
-                JOIN procesos p ON p.id = s.proceso_id
-                WHERE n.estado = 'PENDIENTE'
-                  AND s.activa = TRUE
-                  AND p.es_oportunidad = TRUE
-                  AND p.ambito_administrativo = 'SI'
-                  AND c.significativo = TRUE
-                  AND c.valor_anterior IS NOT NULL
-                  AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
-                  AND LOWER(COALESCE(c.valor_anterior, '')) NOT IN ('navegación', 'navegacion')
-                """,
-                (list(CAMPOS_CAMBIO_RELEVANTES),),
-            )
-            pendientes = int(cursor.fetchone()[0])
-    return {"creadas": creadas, "pendientes": pendientes, "envio": "no_realizado"}
+                SELECT 'PUBLICACION'::text, pub.id
+                FROM publicaciones pub
 
+                UNION ALL
+
+                SELECT 'CAMBIO'::text, c.id
+                FROM cambios c
+                """
+            )
+            return {(str(tipo), int(novedad_id)) for tipo, novedad_id in cursor.fetchall()}
+
+
+def usuarios_con_novedades_nuevas(
+    novedades_antes: set[tuple[str, int]],
+) -> set[UUID]:
+    """Devuelve los usuarios que siguen procesos con filas creadas en este ciclo."""
+    novedades_despues = ids_novedades_seguimiento()
+    nuevas = novedades_despues - novedades_antes
+
+    if not nuevas:
+        return set()
+
+    publicaciones = [
+        novedad_id
+        for tipo, novedad_id in nuevas
+        if tipo == "PUBLICACION"
+    ]
+    cambios = [
+        novedad_id
+        for tipo, novedad_id in nuevas
+        if tipo == "CAMBIO"
+    ]
+
+    usuarios: set[UUID] = set()
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            if publicaciones:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT s.user_id
+                    FROM publicaciones pub
+                    JOIN suscripciones s ON s.proceso_id = pub.proceso_id
+                    WHERE pub.id = ANY(%s)
+                      AND s.activa = TRUE
+                    """,
+                    (publicaciones,),
+                )
+                usuarios.update(UUID(str(row[0])) for row in cursor.fetchall())
+
+            if cambios:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT s.user_id
+                    FROM cambios c
+                    JOIN suscripciones s ON s.proceso_id = c.proceso_id
+                    WHERE c.id = ANY(%s)
+                      AND s.activa = TRUE
+                    """,
+                    (cambios,),
+                )
+                usuarios.update(UUID(str(row[0])) for row in cursor.fetchall())
+
+    return usuarios
 
 def emails_usuarios(user_ids: set[UUID]) -> dict[UUID, str]:
     """Resuelve emails de perfiles activos en la base central de Tu Coach."""
@@ -339,80 +364,39 @@ def emails_usuarios(user_ids: set[UUID]) -> dict[UUID, str]:
             }
 
 
-def listar_notificaciones_pendientes(*, limite: int = 100) -> list[dict[str, Any]]:
-    limite = max(1, min(limite, 500))
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT n.id, n.suscripcion_id, n.cambio_id, n.estado,
-                       n.created_at, s.user_id, s.proceso_id,
-                       p.identificador_estable, p.denominacion,
-                       c.tipo AS cambio_tipo, c.campo,
-                       c.valor_anterior, c.valor_nuevo, c.resumen,
-                       c.detectado_at
-                FROM notificaciones n
-                JOIN suscripciones s ON s.id = n.suscripcion_id
-                JOIN procesos p ON p.id = s.proceso_id
-                JOIN cambios c ON c.id = n.cambio_id
-                WHERE n.estado = 'PENDIENTE'
-                  AND s.activa = TRUE
-                  AND p.es_oportunidad = TRUE
-                  AND p.ambito_administrativo = 'SI'
-                  AND LOWER(COALESCE(c.campo, '')) = ANY(%s)
-                  AND LOWER(COALESCE(c.valor_anterior, '')) NOT IN ('navegación', 'navegacion')
-                ORDER BY n.created_at ASC, n.id ASC
-                LIMIT %s
-                """,
-                (list(CAMPOS_CAMBIO_RELEVANTES), limite),
-            )
-            rows = cursor.fetchall()
-            columns = [description.name for description in cursor.description]
-    return [dict(zip(columns, row)) for row in rows]
+def enviar_avisos_novedades(
+    novedades_antes: set[tuple[str, int]],
+) -> dict[str, int]:
+    """Envía un único correo por usuario con novedades nuevas en este ciclo."""
+    usuarios = usuarios_con_novedades_nuevas(novedades_antes)
 
-def enviar_notificaciones_pendientes(*, limite: int = 100) -> dict[str, int]:
-    """Envía avisos pendientes de seguimiento de forma aislada por notificación."""
-    pendientes = listar_notificaciones_pendientes(limite=limite)
-    if not pendientes:
-        return {"procesadas": 0, "enviadas": 0, "errores": 0}
+    if not usuarios:
+        return {"usuarios_con_novedades": 0, "enviados": 0, "errores": 0}
 
-    user_ids = {UUID(str(item["user_id"])) for item in pendientes}
-    emails = emails_usuarios(user_ids)
-
+    emails = emails_usuarios(usuarios)
     public_app_url = os.getenv(
         "PUBLIC_APP_URL",
         "https://netexamenes.com",
     ).strip().rstrip("/")
+    url = f"{public_app_url}/empleo/seguimiento"
 
-    enviadas = 0
+    enviados = 0
     errores = 0
 
-    for item in pendientes:
-        notificacion_id = int(item["id"])
-        user_id = UUID(str(item["user_id"]))
+    for user_id in usuarios:
         email = emails.get(user_id)
-
         try:
             if not email:
                 raise RuntimeError("No se encontró email activo para el usuario")
 
-            denominacion = str(item["denominacion"] or "Convocatoria")
-            resumen = str(item["resumen"] or "Se ha registrado una novedad.")
-            proceso_id = int(item["proceso_id"])
-            url = f"{public_app_url}/empleo/proceso/{proceso_id}"
-
-            asunto = f"Tu Coach — Novedad en {denominacion}"
+            asunto = "Tu Coach — Novedades en tus convocatorias"
             texto = (
-                f"Hay una novedad en una convocatoria que sigues.\n\n"
-                f"{denominacion}\n"
-                f"{resumen}\n\n"
-                f"Consulta la convocatoria: {url}"
+                "Hay novedades en una o varias de las oportunidades que sigues.\n\n"
+                f"Consúltalas aquí: {url}"
             )
             html = (
-                "<p>Hay una novedad en una convocatoria que sigues.</p>"
-                f"<p><strong>{escape(denominacion)}</strong></p>"
-                f"<p>{escape(resumen)}</p>"
-                f'<p><a href="{escape(url, quote=True)}">Consultar convocatoria</a></p>'
+                "<p>Hay novedades en una o varias de las oportunidades que sigues.</p>"
+                f'<p><a href="{escape(url, quote=True)}">Consultar mis novedades</a></p>'
             )
 
             enviar_email(
@@ -421,44 +405,13 @@ def enviar_notificaciones_pendientes(*, limite: int = 100) -> dict[str, int]:
                 html=html,
                 texto=texto,
             )
-
-            with get_connection() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        UPDATE notificaciones
-                        SET estado = 'ENVIADA',
-                            enviado_at = now(),
-                            error = NULL
-                        WHERE id = %s
-                          AND estado = 'PENDIENTE'
-                        """,
-                        (notificacion_id,),
-                    )
-                    connection.commit()
-
-            enviadas += 1
-
-        except Exception as exc:
-            with get_connection() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        UPDATE notificaciones
-                        SET estado = 'ERROR',
-                            error = %s
-                        WHERE id = %s
-                          AND estado = 'PENDIENTE'
-                        """,
-                        (str(exc)[:2000], notificacion_id),
-                    )
-                    connection.commit()
-
+            enviados += 1
+        except Exception:
             errores += 1
 
     return {
-        "procesadas": len(pendientes),
-        "enviadas": enviadas,
+        "usuarios_con_novedades": len(usuarios),
+        "enviados": enviados,
         "errores": errores,
     }
 
