@@ -26,6 +26,7 @@ from .empleo_admin import (
     router as empleo_admin_router,
 )
 from .empleo_admin_catalogo import router as empleo_admin_catalogo_router
+from . import periodic_endpoint
 from .historial import listar_publicaciones, listar_cambios
 from .organismos import listar_fuentes, listar_organismos, obtener_organismo
 from .procesos import listar_procesos, obtener_proceso
