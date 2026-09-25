@@ -264,6 +264,33 @@ def ejecutar_periodico(*, aplicar: bool = False, hoy: date | None = None, dias_s
             "envio": envios_enviados,
         }
 
+        # PRUEBA E2E TEMPORAL
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO publicaciones (
+                        id, proceso_id, fuente_id, referencia, tipo, titulo,
+                        fecha_publicacion, url, contenido_hash,
+                        contenido_texto, datos_json
+                    )
+                    VALUES (
+                        668,
+                        402,
+                        10,
+                        'PRUEBA-SEGUIMIENTO-402-20260925',
+                        'SEGUIMIENTO',
+                        'PRUEBA - Novedad seguimiento proceso 402',
+                        CURRENT_DATE,
+                        'https://dogv.gva.es/datos/2026/09/25/prueba-seguimiento-402',
+                        NULL,
+                        NULL,
+                        '{"origen":"PRUEBA_CONTROLADA","proceso_id":402}'::jsonb
+                    )
+                    """
+                )
+            connection.commit()
+
         seguimiento_enviado = enviar_avisos_novedades(novedades_seguimiento_antes)
         resultado["notificaciones_seguimiento"] = {
             "envio": seguimiento_enviado,
