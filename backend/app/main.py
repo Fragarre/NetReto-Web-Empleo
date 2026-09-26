@@ -68,6 +68,18 @@ def _usuario_con_empleo(usuario: UsuarioAutenticado = Depends(usuario_actual)) -
     exigir_employment_access(usuario.id, usuario.access_token)
     return usuario
 
+
+def _usuario_con_seguimiento(
+    usuario: UsuarioAutenticado = Depends(usuario_actual),
+) -> UsuarioAutenticado:
+    acceso = obtener_acceso_employment(usuario.id, usuario.access_token)
+    if not acceso.subscribed:
+        raise HTTPException(
+            status_code=403,
+            detail="El seguimiento de oportunidades requiere una suscripción activa.",
+        )
+    return usuario
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "netreto-empleo"}
@@ -117,32 +129,32 @@ def temario_proceso(proceso_id: int, _: UsuarioAutenticado = Depends(_usuario_co
     return obtener_temario(proceso_id) or {"proceso_id": proceso_id, "temario": None}
 
 @app.get("/suscripciones")
-def suscripciones(usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> list[dict[str, Any]]:
+def suscripciones(usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> list[dict[str, Any]]:
     return suscripciones_usuario(usuario.id)
 
 @app.get("/suscripciones/{proceso_id}")
-def suscripcion_proceso(proceso_id: int, usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> dict[str, Any]:
+def suscripcion_proceso(proceso_id: int, usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> dict[str, Any]:
     return suscripcion_usuario_proceso(usuario.id, proceso_id) or {"activa": False, "proceso_id": proceso_id}
 
 @app.post("/suscripciones/{proceso_id}")
-def alta_suscripcion(proceso_id: int, usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> dict[str, Any]:
+def alta_suscripcion(proceso_id: int, usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> dict[str, Any]:
     try: return suscribirse(usuario.id, proceso_id)
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @app.delete("/suscripciones/{proceso_id}")
-def baja_suscripcion(proceso_id: int, usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> dict[str, Any]:
+def baja_suscripcion(proceso_id: int, usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> dict[str, Any]:
     return {"proceso_id": proceso_id, "activa": False, "cancelada": cancelar_suscripcion(usuario.id, proceso_id)}
 
 @app.get("/seguimiento/cambios")
-def seguimiento_cambios(limite: int = Query(default=100, ge=1, le=200), usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> list[dict[str, Any]]:
+def seguimiento_cambios(limite: int = Query(default=100, ge=1, le=200), usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> list[dict[str, Any]]:
     return cambios_usuario(usuario.id, limite=limite)
 
 @app.get("/seguimiento/estado")
-def seguimiento_estado(usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> dict[str, Any]:
+def seguimiento_estado(usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> dict[str, Any]:
     return estado_novedades_usuario(usuario.id)
 
 @app.post("/seguimiento/estado/visto")
-def seguimiento_estado_visto(hasta: str | None = Query(default=None), usuario: UsuarioAutenticado = Depends(_usuario_con_empleo)) -> dict[str, Any]:
+def seguimiento_estado_visto(hasta: str | None = Query(default=None), usuario: UsuarioAutenticado = Depends(_usuario_con_seguimiento)) -> dict[str, Any]:
     from datetime import datetime
     fecha = None
     if hasta:
