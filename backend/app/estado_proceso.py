@@ -237,7 +237,7 @@ def estado_inscripcion(proceso: dict[str, Any], *, hoy: date | None = None) -> d
     # plazo a una publicación posterior en BOE deben permanecer explícitamente
     # pendientes de BOE mientras no exista esa publicación. No es un plazo
     # desconocido: conocemos el hito oficial que falta.
-    if origen in {"BOP_VALENCIA_MUNICIPAL", "BOP_CASTELLON", "BOP_ALICANTE"} and not boe_local:
+    if origen in {"BOP_VALENCIA", "BOP_VALENCIA_MUNICIPAL", "BOP_CASTELLON", "BOP_ALICANTE"} and not boe_local:
         return {"codigo": "PENDIENTE_BOE"}
 
     return {"codigo": "NO_DETERMINADO"}
