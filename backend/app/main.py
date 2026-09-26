@@ -72,7 +72,7 @@ def _usuario_con_empleo(usuario: UsuarioAutenticado = Depends(usuario_actual)) -
 def _usuario_con_seguimiento(
     usuario: UsuarioAutenticado = Depends(usuario_actual),
 ) -> UsuarioAutenticado:
-    acceso = obtener_acceso_employment(usuario.id, usuario.access_token)
+    acceso = exigir_employment_access(usuario.id, usuario.access_token)
     if not acceso.subscribed:
         raise HTTPException(
             status_code=403,
